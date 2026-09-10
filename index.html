@@ -1,0 +1,2315 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
+  <meta name="theme-color" id="themeColorMeta" content="#0288d1"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+  <meta name="apple-mobile-web-app-title" content="Aqua"/>
+  <link rel="apple-touch-icon" href="https://em-content.zobj.net/source/apple/391/droplet_1f4a7.png"/>
+  <title>💧 Aqua — Smart Water Reminder</title>
+
+  <!-- Leaflet Map -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Firebase -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
+    import { getFirestore, doc, setDoc, addDoc, getDoc, getDocs,
+             collection, serverTimestamp, onSnapshot, query, orderBy }
+      from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey:            "AIzaSyDi6F8eCQwVGtooDPm_Es5NJFbeUdqxL5k",
+      authDomain:        "water-notification76.firebaseapp.com",
+      projectId:         "water-notification76",
+      storageBucket:     "water-notification76.firebasestorage.app",
+      messagingSenderId: "316514489299",
+      appId:             "1:316514489299:web:ec0eb65f76eaf851f55526",
+      measurementId:     "G-Z4T7JZ047L"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db  = getFirestore(app);
+
+    function getDeviceId(){
+      let id = localStorage.getItem('deviceId');
+      if(!id){ id='user_'+Date.now()+'_'+Math.random().toString(36).substr(2,9); localStorage.setItem('deviceId',id); }
+      return id;
+    }
+
+    window.getDeviceId = getDeviceId;
+
+    window.saveProfileToFirebase = async function(profile){
+      try{
+        const deviceId = getDeviceId();
+        await setDoc(doc(db,'users',deviceId),{
+          ...profile, deviceId,
+          lastSeen: serverTimestamp(),
+          firstSeen: profile.firstSeen||new Date().toISOString(),
+          appVersion:'4.0',
+          userAgent: navigator.userAgent,
+          language:  navigator.language,
+          platform:  navigator.platform,
+          screenSize:`${screen.width}x${screen.height}`,
+          timezone:  Intl.DateTimeFormat().resolvedOptions().timeZone,
+        },{ merge:true });
+        setBadge('fbBadge','fbStatus','🔥 Synced ✅','connected');
+        console.log('✅ Profile saved');
+      } catch(e){
+        setBadge('fbBadge','fbStatus','❌ Sync Failed','disconnected');
+        console.warn('FB error:',e);
+      }
+    };
+
+    window.logEventToFirebase = async function(type,message,extra={}){
+      try{
+        const deviceId=getDeviceId();
+        await addDoc(collection(db,'users',deviceId,'logs'),{
+          type,message,timestamp:serverTimestamp(),localTime:new Date().toISOString(),...extra
+        });
+      } catch(e){}
+    };
+
+    window.updateStatsInFirebase = async function(stats){
+      try{
+        const deviceId=getDeviceId();
+        const today=new Date().toISOString().slice(0,10);
+        await setDoc(doc(db,'users',deviceId,'dailyStats',today),
+          {...stats,date:today,updatedAt:serverTimestamp()},{merge:true});
+      } catch(e){}
+    };
+
+    // Admin: get all users
+    window.getAllUsersFromFirebase = async function(){
+      try{
+        const snap = await getDocs(collection(db,'users'));
+        return snap.docs.map(d=>({id:d.id,...d.data()}));
+      } catch(e){ return []; }
+    };
+
+    // Live user count
+    window.listenUserCount = function(cb){
+      try{
+        onSnapshot(collection(db,'users'), snap=>cb(snap.size));
+      } catch(e){}
+    };
+
+    // New user alert
+    window.listenNewUsers = function(cb){
+      try{
+        onSnapshot(collection(db,'users'), snap=>{
+          snap.docChanges().forEach(change=>{
+            if(change.type==='added') cb(change.doc.data());
+          });
+        });
+      } catch(e){}
+    };
+
+    function setBadge(badgeId,statusId,text,cls){
+      const b=document.getElementById(badgeId), s=document.getElementById(statusId);
+      if(b&&s){ b.className='firebase-badge '+cls; s.textContent=text; }
+    }
+
+    console.log('🔥 Firebase ready!');
+  </script>
+
+  <style>
+    /* ════════════════════════════════
+       CSS VARIABLES — THEMING
+    ════════════════════════════════ */
+    :root{
+      --primary:#0288d1; --primary-dark:#0277bd; --primary-light:#e1f5fe;
+      --secondary:#0097a7; --accent:#00acc1;
+      --bg:linear-gradient(135deg,#e0f7ff,#b3e5fc,#81d4fa);
+      --card-bg:rgba(255,255,255,0.92);
+      --text:#37474f; --text-light:#78909c; --text-muted:#90a4ae;
+      --border:#b0bec5; --ring-bg:#e0f0ff;
+      --input-bg:white; --shadow:0 20px 60px rgba(0,140,200,0.2);
+      --success:#4caf50; --warning:#ff9800; --danger:#e53935;
+      --tab-bg:#f0f4f8; --tab-active:var(--primary);
+    }
+    [data-theme="dark"]{
+      --bg:linear-gradient(135deg,#0d1b2a,#1b2838,#0d1b2a);
+      --card-bg:rgba(25,35,50,0.95);
+      --text:#e0f0ff; --text-light:#90b4cc; --text-muted:#607d8b;
+      --border:#37474f; --ring-bg:#1a2a3a;
+      --input-bg:#1a2a3a; --shadow:0 20px 60px rgba(0,0,0,0.5);
+      --tab-bg:#1a2a3a;
+    }
+
+    *{ margin:0; padding:0; box-sizing:border-box; }
+    html{ scroll-behavior:smooth; }
+    body{
+      font-family:'Segoe UI',sans-serif;
+      background:var(--bg); min-height:100vh;
+      color:var(--text); transition:background 0.3s;
+    }
+
+    /* ── SPLASH SCREEN ── */
+    #splashScreen{
+      position:fixed; inset:0; z-index:99999;
+      background:linear-gradient(135deg,#0288d1,#0097a7);
+      display:flex; flex-direction:column;
+      justify-content:center; align-items:center; gap:16px;
+    }
+    #splashScreen .splash-icon{ font-size:80px; animation:splashBounce 1s infinite; }
+    @keyframes splashBounce{
+      0%,100%{ transform:translateY(0) scale(1); }
+      50%{ transform:translateY(-16px) scale(1.1); }
+    }
+    #splashScreen h1{ color:white; font-size:32px; font-weight:800; }
+    #splashScreen p { color:rgba(255,255,255,0.8); font-size:14px; }
+    .splash-bar{
+      width:200px; height:4px; background:rgba(255,255,255,0.3);
+      border-radius:2px; overflow:hidden; margin-top:16px;
+    }
+    .splash-fill{
+      height:100%; background:white; border-radius:2px;
+      animation:splashLoad 2.5s ease forwards;
+    }
+    @keyframes splashLoad{ from{width:0} to{width:100%} }
+
+    /* ── WRAPPER ── */
+    .wrapper{
+      display:flex; flex-direction:column; gap:16px;
+      width:100%; max-width:480px; margin:0 auto;
+      padding:16px 12px 100px;
+    }
+
+    /* ── CARD ── */
+    .card{
+      background:var(--card-bg); backdrop-filter:blur(12px);
+      border-radius:24px; padding:24px 20px;
+      box-shadow:var(--shadow); transition:background 0.3s;
+    }
+
+    /* ── BOTTOM NAV ── */
+    .bottom-nav{
+      position:fixed; bottom:0; left:0; right:0; z-index:100;
+      background:var(--card-bg); backdrop-filter:blur(20px);
+      display:flex; justify-content:space-around; align-items:center;
+      padding:8px 0 calc(8px + env(safe-area-inset-bottom));
+      box-shadow:0 -4px 20px rgba(0,0,0,0.1);
+      border-top:1px solid rgba(128,128,128,0.1);
+      display:none;
+    }
+    .nav-item{
+      display:flex; flex-direction:column; align-items:center; gap:2px;
+      padding:6px 12px; border-radius:12px; cursor:pointer;
+      transition:all 0.2s; border:none; background:transparent; color:var(--text-muted);
+      font-size:11px; font-weight:600; min-width:56px;
+    }
+    .nav-item .nav-icon{ font-size:20px; transition:transform 0.2s; }
+    .nav-item.active{ color:var(--primary); }
+    .nav-item.active .nav-icon{ transform:scale(1.2); }
+
+    /* ── SCREENS ── */
+    .screen{ display:none; }
+    .screen.active{ display:block; }
+
+    /* ── ONBOARDING ── */
+    #onboardingScreen{ text-align:center; }
+    #onboardingScreen h2{ font-size:22px; color:var(--primary); margin-bottom:6px; }
+    #onboardingScreen > p{ font-size:13px; color:var(--text-light); margin-bottom:20px; }
+    .step{ display:none; }
+    .step.active{ display:block; }
+    .step-indicator{ display:flex; justify-content:center; gap:8px; margin-bottom:20px; }
+    .step-dot{ width:10px; height:10px; border-radius:50%; background:var(--ring-bg); transition:all 0.3s; }
+    .step-dot.active{ background:var(--primary); transform:scale(1.3); }
+    .step-dot.done  { background:var(--accent); }
+    .step-icon{ font-size:48px; margin-bottom:10px; }
+    .step h3  { font-size:18px; color:var(--primary); margin-bottom:4px; }
+    .step > p { font-size:13px; color:var(--text-light); margin-bottom:16px; }
+    .form-group{ margin-bottom:14px; text-align:left; }
+    .form-group label{ font-size:12px; color:var(--text-light); font-weight:600; display:block; margin-bottom:5px; }
+    .form-group input,.form-group select{
+      width:100%; padding:11px 13px; border-radius:12px;
+      border:1.5px solid var(--border); font-size:14px; color:var(--text);
+      background:var(--input-bg); outline:none; transition:border 0.2s;
+    }
+    .form-group input:focus,.form-group select:focus{ border-color:var(--primary); }
+    .gender-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+    .gender-btn{
+      padding:10px 6px; border-radius:12px; border:2px solid var(--border);
+      background:var(--input-bg); cursor:pointer; font-size:12px; font-weight:600;
+      color:var(--text-light); transition:all 0.2s; text-align:center;
+    }
+    .gender-btn .g-icon{ font-size:22px; display:block; margin-bottom:3px; }
+    .gender-btn.selected{ border-color:var(--primary); background:var(--primary-light); color:var(--primary); }
+    .activity-list{ display:flex; flex-direction:column; gap:8px; }
+    .activity-btn{
+      padding:10px 12px; border-radius:12px; border:2px solid var(--border);
+      background:var(--input-bg); cursor:pointer; font-size:13px; font-weight:600;
+      color:var(--text-light); transition:all 0.2s; text-align:left;
+      display:flex; align-items:center; gap:10px;
+    }
+    .activity-btn .a-icon{ font-size:20px; }
+    .activity-btn .a-title{ font-weight:700; color:var(--text); font-size:13px; }
+    .activity-btn .a-sub  { font-size:11px; color:var(--text-muted); }
+    .activity-btn.selected{ border-color:var(--primary); background:var(--primary-light); }
+    .activity-btn.selected .a-title{ color:var(--primary); }
+    .btn-next{
+      width:100%; padding:13px; border:none; border-radius:14px;
+      background:linear-gradient(135deg,var(--primary),var(--secondary));
+      color:white; font-size:15px; font-weight:700; cursor:pointer;
+      transition:all 0.3s; margin-top:8px;
+    }
+    .btn-next:hover{ transform:translateY(-2px); box-shadow:0 8px 24px rgba(2,136,209,0.4); }
+    .btn-back{
+      width:100%; padding:10px; border:2px solid var(--border);
+      border-radius:14px; background:transparent; color:var(--text-light);
+      font-size:14px; font-weight:600; cursor:pointer; transition:all 0.2s; margin-top:8px;
+    }
+    .result-card{ background:linear-gradient(135deg,#e3f2fd,#e0f7fa); border-radius:16px; padding:18px; margin:12px 0; }
+    .result-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .result-item{ background:white; border-radius:12px; padding:10px; text-align:center; }
+    .result-item .r-val{ font-size:20px; font-weight:800; color:var(--primary); }
+    .result-item .r-lbl{ font-size:11px; color:var(--text-muted); }
+    .result-item.highlight{ grid-column:1/-1; background:var(--primary); }
+    .result-item.highlight .r-val{ color:white; font-size:26px; }
+    .result-item.highlight .r-lbl{ color:#b3e5fc; }
+
+    /* ── HOME SCREEN ── */
+    .home-header{ text-align:center; margin-bottom:16px; }
+    .drop-icon{ font-size:52px; animation:bounce 2s infinite; display:inline-block; }
+    @keyframes bounce{ 0%,100%{ transform:translateY(0); } 50%{ transform:translateY(-10px); } }
+    .home-header h1{ font-size:20px; color:var(--primary); margin:8px 0 2px; }
+    .home-header p  { font-size:12px; color:var(--text-light); }
+
+    /* Firebase Badge */
+    .firebase-badge{
+      display:inline-flex; align-items:center; gap:6px;
+      padding:4px 12px; border-radius:999px; font-size:11px; font-weight:600; margin:6px 0;
+    }
+    .firebase-badge.connected   { background:#e8f5e9; color:#2e7d32; }
+    .firebase-badge.disconnected{ background:#ffebee; color:#c62828; }
+    .fb-dot{ width:7px; height:7px; border-radius:50%; background:#4caf50; animation:blink 1.2s infinite; }
+    @keyframes blink{ 0%,100%{ opacity:1; } 50%{ opacity:0.2; } }
+
+    /* Profile chip */
+    .profile-chip{
+      display:inline-flex; align-items:center; gap:6px;
+      background:var(--primary-light); border-radius:999px;
+      padding:5px 12px; font-size:11px; color:var(--primary);
+      font-weight:600; margin:6px 0; cursor:pointer; transition:all 0.2s;
+    }
+    .profile-chip:hover{ background:#b3e5fc; }
+
+    /* Top bar actions */
+    .top-bar{
+      display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;
+    }
+    .icon-btn{
+      width:36px; height:36px; border-radius:12px; border:none;
+      background:var(--primary-light); color:var(--primary);
+      font-size:16px; cursor:pointer; transition:all 0.2s;
+      display:flex; align-items:center; justify-content:center;
+    }
+    .icon-btn:hover{ background:#b3e5fc; transform:scale(1.1); }
+
+    /* Water animation */
+    .water-visual{
+      position:relative; width:150px; height:150px; margin:0 auto 16px;
+    }
+    .water-circle{
+      width:150px; height:150px; border-radius:50%;
+      background:var(--ring-bg); position:relative; overflow:hidden;
+      border:3px solid var(--primary-light);
+    }
+    .water-fill{
+      position:absolute; bottom:0; left:0; right:0;
+      background:linear-gradient(180deg,#29b6f6,#0288d1);
+      transition:height 0.8s cubic-bezier(0.4,0,0.2,1);
+      border-radius:0 0 50% 50%;
+    }
+    .water-wave{
+      position:absolute; top:-8px; left:-10px; right:-10px; height:20px;
+      background:linear-gradient(180deg,rgba(41,182,246,0.6),transparent);
+      border-radius:50%;
+      animation:wave 2s linear infinite;
+    }
+    @keyframes wave{ 0%,100%{ transform:scaleX(1); } 50%{ transform:scaleX(1.1); } }
+    .water-text{
+      position:absolute; inset:0; display:flex; flex-direction:column;
+      align-items:center; justify-content:center; z-index:1;
+    }
+    .water-pct{ font-size:28px; font-weight:800; color:white; text-shadow:0 1px 4px rgba(0,0,0,0.3); }
+    .water-lbl{ font-size:11px; color:rgba(255,255,255,0.9); }
+
+    /* Countdown ring */
+    .ring-container{ position:relative; width:130px; height:130px; margin:0 auto 14px; }
+    .ring-container svg{ transform:rotate(-90deg); width:130px; height:130px; }
+    .ring-bg      { fill:none; stroke:var(--ring-bg); stroke-width:10; }
+    .ring-progress{ fill:none; stroke:var(--primary); stroke-width:10; stroke-linecap:round; stroke-dasharray:376; stroke-dashoffset:0; transition:stroke-dashoffset 1s linear; }
+    .ring-text{ position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+    .ring-text .time { font-size:22px; font-weight:700; color:var(--primary); }
+    .ring-text .label{ font-size:10px; color:var(--text-muted); }
+
+    /* Status */
+    .status-badge{ display:inline-block; padding:4px 14px; border-radius:999px; font-size:11px; font-weight:600; margin-bottom:14px; }
+    .status-badge.inactive{ background:var(--tab-bg); color:var(--text-muted); }
+    .status-badge.active  { background:#e0f7fa; color:#00796b; }
+
+    /* Drink target */
+    .drink-target{
+      background:linear-gradient(135deg,var(--primary-light),#e0f7fa); border-radius:14px;
+      padding:12px 14px; margin-bottom:12px;
+      display:flex; justify-content:space-between; align-items:center;
+    }
+    .dt-val{ font-size:24px; font-weight:800; color:var(--primary); }
+    .dt-lbl{ font-size:11px; color:var(--text-muted); }
+    .dt-right{ text-align:right; font-size:11px; color:var(--text-light); }
+    .dt-right strong{ display:block; font-size:14px; color:var(--primary); }
+
+    /* Progress */
+    .progress-section{ margin-bottom:14px; }
+    .progress-label{ display:flex; justify-content:space-between; font-size:11px; color:var(--text-light); margin-bottom:5px; }
+    .progress-bar-bg{ height:10px; background:var(--ring-bg); border-radius:999px; overflow:hidden; }
+    .progress-bar-fill{
+      height:100%; border-radius:999px;
+      background:linear-gradient(90deg,#29b6f6,var(--primary));
+      transition:width 0.5s ease; width:0%;
+    }
+
+    /* LED */
+    .led-bar{
+      height:4px; border-radius:2px; margin-bottom:14px;
+      background:linear-gradient(90deg,#29b6f6,#0288d1,#00acc1);
+      background-size:200%; animation:ledScroll 1.5s linear infinite; display:none;
+    }
+    .led-bar.active{ display:block; }
+    @keyframes ledScroll{ 0%{ background-position:0%; } 100%{ background-position:200%; } }
+
+    /* Sound row */
+    .selector-row{ margin-bottom:12px; text-align:left; }
+    .selector-row label{ font-size:12px; color:var(--text-light); font-weight:600; display:block; margin-bottom:5px; }
+    .sound-row{ display:flex; gap:8px; align-items:center; }
+    .sound-row select{
+      flex:1; padding:9px 10px; border-radius:10px; border:1px solid var(--border);
+      font-size:13px; color:var(--text); background:var(--input-bg); cursor:pointer; outline:none;
+    }
+    .btn-preview{
+      padding:9px 12px; background:var(--primary-light); border:none; border-radius:10px;
+      cursor:pointer; font-size:15px; transition:all 0.2s; color:var(--primary);
+    }
+    input[type=range]{
+      width:100%; -webkit-appearance:none; height:5px; background:#b3e5fc; border-radius:3px;
+    }
+    input[type=range]::-webkit-slider-thumb{
+      -webkit-appearance:none; width:16px; height:16px; background:var(--primary); border-radius:50%; cursor:pointer;
+    }
+    .volume-label{ display:flex; justify-content:space-between; font-size:11px; color:var(--text-muted); margin-top:3px; }
+
+    /* Buttons */
+    .btn-main{
+      width:100%; padding:13px; border:none; border-radius:14px;
+      font-size:14px; font-weight:700; cursor:pointer; transition:all 0.3s; margin-bottom:8px;
+    }
+    .btn-main.start{
+      background:linear-gradient(135deg,var(--primary),var(--secondary));
+      color:white; box-shadow:0 6px 20px rgba(2,136,209,0.4);
+    }
+    .btn-main.start:hover{ transform:translateY(-2px); }
+    .btn-main.stop{ background:linear-gradient(135deg,#ef5350,#e53935); color:white; }
+    .btn-drank{
+      width:100%; padding:10px; border:2px solid var(--primary); background:transparent;
+      color:var(--primary); border-radius:14px; font-size:14px; font-weight:600; cursor:pointer;
+      transition:all 0.3s; margin-bottom:14px;
+    }
+    .btn-drank:hover:not(:disabled){ background:var(--primary-light); }
+    .btn-drank:disabled{ opacity:0.4; cursor:default; }
+
+    /* Stats row */
+    .stats{ display:flex; justify-content:space-around; background:var(--tab-bg); border-radius:14px; padding:10px 6px; }
+    .stat .val { font-size:16px; font-weight:800; color:var(--primary); }
+    .stat .desc{ font-size:10px; color:var(--text-muted); margin-top:2px; }
+
+    /* BMI strip */
+    .bmi-strip{
+      background:linear-gradient(135deg,#f3e5f5,#e8eaf6); border-radius:14px;
+      padding:10px 14px; margin-bottom:12px;
+      display:flex; justify-content:space-between; align-items:center;
+    }
+    .bmi-val{ font-size:22px; font-weight:800; color:#7b1fa2; }
+    .bmi-label{ font-size:12px; color:#9c27b0; font-weight:600; }
+    .bmi-info{ font-size:11px; color:var(--text-muted); text-align:right; }
+
+    /* Weather strip */
+    .weather-strip{
+      background:linear-gradient(135deg,#e3f2fd,#fce4ec); border-radius:14px;
+      padding:10px 14px; margin-bottom:12px;
+      display:flex; justify-content:space-between; align-items:center;
+    }
+    .weather-icon{ font-size:28px; }
+    .weather-info .w-temp{ font-size:20px; font-weight:800; color:var(--primary); }
+    .weather-info .w-desc{ font-size:11px; color:var(--text-muted); }
+    .weather-adj{ font-size:11px; color:#e65100; font-weight:600; text-align:right; }
+
+    /* ── STATS SCREEN ── */
+    .section-title{ font-size:16px; font-weight:700; color:var(--primary); margin-bottom:14px; }
+
+    /* Chart */
+    .chart-container{ width:100%; border-radius:14px; overflow:hidden; background:var(--tab-bg); padding:12px; }
+    canvas{ width:100% !important; }
+
+    /* Calendar */
+    .calendar-grid{
+      display:grid; grid-template-columns:repeat(7,1fr); gap:4px; margin-top:10px;
+    }
+    .cal-header{ font-size:10px; font-weight:700; color:var(--text-muted); text-align:center; padding:4px 0; }
+    .cal-day{
+      aspect-ratio:1; border-radius:8px; display:flex; align-items:center;
+      justify-content:center; font-size:11px; font-weight:600; cursor:pointer;
+      background:var(--tab-bg); color:var(--text); transition:all 0.2s;
+    }
+    .cal-day.today{ border:2px solid var(--primary); }
+    .cal-day.goal-met{ background:var(--primary); color:white; }
+    .cal-day.partial { background:#b3e5fc; color:var(--primary-dark); }
+    .cal-day.empty   { background:transparent; cursor:default; }
+    .cal-nav{ display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+    .cal-nav button{
+      background:var(--primary-light); border:none; border-radius:8px;
+      padding:6px 12px; cursor:pointer; color:var(--primary); font-weight:700;
+    }
+    .cal-nav span{ font-size:14px; font-weight:700; color:var(--text); }
+
+    /* Summary cards */
+    .summary-cards{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px; }
+    .summary-card{
+      background:var(--card-bg); border-radius:16px; padding:14px;
+      box-shadow:var(--shadow); text-align:center;
+    }
+    .summary-card .sc-val{ font-size:22px; font-weight:800; color:var(--primary); }
+    .summary-card .sc-lbl{ font-size:11px; color:var(--text-muted); margin-top:2px; }
+
+    /* ── ACHIEVEMENTS ── */
+    .badges-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .badge-card{
+      background:var(--card-bg); border-radius:16px; padding:14px;
+      text-align:center; box-shadow:var(--shadow); transition:all 0.3s;
+      position:relative; overflow:hidden;
+    }
+    .badge-card.locked{ opacity:0.4; filter:grayscale(1); }
+    .badge-card.unlocked{ border:2px solid gold; }
+    .badge-icon{ font-size:36px; margin-bottom:6px; }
+    .badge-name{ font-size:12px; font-weight:700; color:var(--text); }
+    .badge-desc{ font-size:10px; color:var(--text-muted); margin-top:2px; }
+    .badge-new{
+      position:absolute; top:6px; right:6px; background:var(--danger);
+      color:white; font-size:9px; font-weight:700; padding:2px 6px; border-radius:999px;
+    }
+
+    /* ── SETTINGS ── */
+    .settings-section{ margin-bottom:20px; }
+    .settings-section h3{ font-size:14px; color:var(--text-muted); font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px; padding-bottom:6px; border-bottom:1px solid var(--border); }
+    .setting-row{
+      display:flex; justify-content:space-between; align-items:center;
+      padding:12px 0; border-bottom:1px solid var(--ring-bg);
+    }
+    .setting-row:last-child{ border-bottom:none; }
+    .setting-label{ font-size:14px; color:var(--text); font-weight:600; }
+    .setting-sub{ font-size:11px; color:var(--text-muted); margin-top:2px; }
+
+    /* Toggle switch */
+    .toggle{ position:relative; width:44px; height:24px; flex-shrink:0; }
+    .toggle input{ opacity:0; width:0; height:0; }
+    .toggle-slider{
+      position:absolute; inset:0; background:var(--border);
+      border-radius:999px; cursor:pointer; transition:0.3s;
+    }
+    .toggle-slider:before{
+      content:''; position:absolute; width:18px; height:18px;
+      left:3px; top:3px; background:white; border-radius:50%; transition:0.3s;
+    }
+    .toggle input:checked + .toggle-slider{ background:var(--primary); }
+    .toggle input:checked + .toggle-slider:before{ transform:translateX(20px); }
+
+    /* Theme colors */
+    .theme-colors{ display:flex; gap:8px; flex-wrap:wrap; }
+    .theme-dot{
+      width:28px; height:28px; border-radius:50%; cursor:pointer;
+      transition:transform 0.2s; border:2px solid transparent;
+    }
+    .theme-dot.active{ transform:scale(1.3); border-color:white; box-shadow:0 0 0 2px var(--text); }
+
+    /* Language selector */
+    .lang-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+    .lang-btn{
+      padding:8px 4px; border-radius:10px; border:2px solid var(--border);
+      background:var(--input-bg); cursor:pointer; font-size:12px; font-weight:600;
+      color:var(--text-light); transition:all 0.2s; text-align:center;
+    }
+    .lang-btn.active{ border-color:var(--primary); background:var(--primary-light); color:var(--primary); }
+
+    /* File upload */
+    .file-upload{
+      border:2px dashed var(--border); border-radius:12px; padding:16px;
+      text-align:center; cursor:pointer; transition:all 0.2s; font-size:13px; color:var(--text-light);
+    }
+    .file-upload:hover{ border-color:var(--primary); color:var(--primary); }
+
+    /* ── ADMIN DASHBOARD ── */
+    .admin-stats{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-bottom:14px; }
+    .admin-stat{
+      background:var(--card-bg); border-radius:14px; padding:12px;
+      text-align:center; box-shadow:var(--shadow);
+    }
+    .admin-stat .av{ font-size:22px; font-weight:800; color:var(--primary); }
+    .admin-stat .al{ font-size:10px; color:var(--text-muted); }
+    .user-card{
+      background:var(--card-bg); border-radius:16px; padding:14px;
+      margin-bottom:10px; box-shadow:var(--shadow);
+    }
+    .user-card-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+    .user-name{ font-size:15px; font-weight:700; color:var(--text); }
+    .user-online{ font-size:10px; color:var(--success); font-weight:600; }
+    .user-tags{ display:flex; flex-wrap:wrap; gap:4px; }
+    .user-tag{
+      padding:2px 8px; border-radius:999px; font-size:10px; font-weight:600;
+      background:var(--primary-light); color:var(--primary);
+    }
+    .live-count{
+      background:linear-gradient(135deg,var(--primary),var(--secondary));
+      border-radius:14px; padding:14px; text-align:center; margin-bottom:14px;
+      color:white;
+    }
+    .live-count .lc-num{ font-size:40px; font-weight:900; }
+    .live-count .lc-lbl{ font-size:12px; opacity:0.85; }
+    .live-dot{ display:inline-block; width:8px; height:8px; background:#4caf50; border-radius:50%; animation:blink 1s infinite; margin-right:4px; }
+
+    /* Map */
+    #userMap{ width:100%; height:250px; border-radius:16px; overflow:hidden; margin-bottom:14px; }
+
+    /* New user toast */
+    .toast{
+      position:fixed; top:20px; right:16px; z-index:9999;
+      background:var(--primary); color:white; border-radius:14px;
+      padding:12px 16px; font-size:13px; font-weight:600;
+      box-shadow:0 8px 24px rgba(0,0,0,0.2); max-width:280px;
+      animation:slideIn 0.4s ease; display:none;
+    }
+    .toast.show{ display:block; }
+    @keyframes slideIn{ from{ transform:translateX(120%); } to{ transform:translateX(0); } }
+
+    /* WhatsApp */
+    .wa-btn{
+      display:flex; align-items:center; justify-content:center; gap:8px;
+      width:100%; padding:12px; background:#25d366; color:white;
+      border:none; border-radius:14px; font-size:14px; font-weight:700;
+      cursor:pointer; text-decoration:none; margin-top:8px; transition:all 0.2s;
+    }
+    .wa-btn:hover{ background:#1da851; transform:translateY(-2px); }
+    .email-btn{
+      display:flex; align-items:center; justify-content:center; gap:8px;
+      width:100%; padding:12px; background:#ea4335; color:white;
+      border:none; border-radius:14px; font-size:14px; font-weight:700;
+      cursor:pointer; text-decoration:none; margin-top:8px; transition:all 0.2s;
+    }
+    .email-btn:hover{ background:#c5221f; transform:translateY(-2px); }
+
+    /* ── MODAL ── */
+    .modal-overlay{
+      display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6);
+      backdrop-filter:blur(8px); z-index:9999; justify-content:center; align-items:center; padding:16px;
+    }
+    .modal-overlay.show{ display:flex; }
+    .modal{
+      background:var(--card-bg); border-radius:28px; padding:28px 24px;
+      max-width:360px; width:100%; text-align:center;
+      box-shadow:0 30px 80px rgba(0,0,0,0.3);
+      animation:popIn 0.4s cubic-bezier(0.34,1.56,0.64,1);
+      max-height:90vh; overflow-y:auto;
+    }
+    @keyframes popIn{ from{ transform:scale(0.6); opacity:0; } to{ transform:scale(1); opacity:1; } }
+    .pulse-ring{
+      width:90px; height:90px; border-radius:50%; background:rgba(2,136,209,0.1);
+      display:flex; justify-content:center; align-items:center; margin:0 auto 8px;
+      animation:pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes pulse{ 0%{ box-shadow:0 0 0 0 rgba(2,136,209,0.5); } 70%{ box-shadow:0 0 0 20px rgba(2,136,209,0); } 100%{ box-shadow:0 0 0 0 rgba(2,136,209,0); } }
+    .modal-icon{ font-size:56px; animation:splashDrop 1.2s infinite; }
+    @keyframes splashDrop{ 0%{ transform:translateY(-6px); } 50%{ transform:translateY(4px) scale(1.05); } 100%{ transform:translateY(-6px); } }
+    .modal h2{ font-size:20px; color:var(--primary); margin:10px 0 4px; }
+    .drink-amount{
+      font-size:32px; font-weight:900; color:var(--primary);
+      background:var(--primary-light); border-radius:12px;
+      padding:8px 18px; display:inline-block; margin:8px 0;
+    }
+    .drink-sub{ font-size:12px; color:var(--text-muted); margin-bottom:12px; }
+    .tip-box{
+      background:linear-gradient(135deg,#f3e5f5,#e8eaf6);
+      border-radius:12px; padding:12px 14px; margin:12px 0; text-align:left;
+    }
+    .tip-header{ font-size:10px; color:#7b1fa2; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px; }
+    .tip-text{ font-size:12px; color:#4a148c; line-height:1.6; }
+    .voice-status{
+      display:inline-flex; align-items:center; gap:5px; background:#e8f5e9;
+      border-radius:999px; padding:3px 10px; font-size:11px; color:#2e7d32;
+      font-weight:600; margin-bottom:10px;
+    }
+    .voice-dot{ width:7px; height:7px; border-radius:50%; background:#4caf50; animation:blink 1s infinite; }
+    .snooze-info{ font-size:11px; color:var(--text-muted); margin-top:6px; min-height:14px; }
+    .modal-btns{ display:flex; gap:8px; margin-top:14px; }
+    .btn-dismiss{
+      flex:2; padding:12px; border:none; border-radius:14px;
+      background:linear-gradient(135deg,var(--primary),var(--secondary));
+      color:white; font-size:14px; font-weight:700; cursor:pointer;
+    }
+    .btn-snooze{
+      flex:1; padding:12px; border:2px solid var(--border); border-radius:14px;
+      background:transparent; color:var(--text-light); font-size:13px; font-weight:600; cursor:pointer;
+    }
+
+    /* ── LOG ── */
+    .log-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+    .log-header h2{ font-size:15px; color:var(--primary); }
+    .log-actions{ display:flex; gap:6px; }
+    .log-actions button{ padding:5px 10px; border-radius:8px; border:none; font-size:11px; font-weight:600; cursor:pointer; }
+    .btn-export{ background:var(--primary); color:white; }
+    .btn-clear { background:#ffebee; color:var(--danger); }
+    .filter-tabs{ display:flex; gap:5px; margin-bottom:10px; flex-wrap:wrap; }
+    .filter-tab{ padding:4px 10px; border-radius:999px; border:none; font-size:11px; font-weight:600; cursor:pointer; background:var(--tab-bg); color:var(--text-muted); transition:all 0.2s; }
+    .filter-tab.active{ background:var(--primary); color:white; }
+    .log-search{ width:100%; padding:8px 10px; border-radius:10px; border:1px solid var(--border); font-size:12px; outline:none; margin-bottom:10px; color:var(--text); background:var(--input-bg); }
+    .daily-summary{ background:#e8f5e9; border-radius:12px; padding:10px 14px; margin-bottom:10px; font-size:12px; color:#2e7d32; }
+    .summary-grid{ display:grid; grid-template-columns:1fr 1fr; gap:5px; margin-top:6px; }
+    .summary-item{ background:white; border-radius:8px; padding:7px 8px; font-size:10px; color:#546e7a; }
+    .summary-item span{ font-weight:700; color:var(--primary); display:block; font-size:14px; }
+    .log-table-wrapper{ max-height:240px; overflow-y:auto; border-radius:12px; border:1px solid var(--ring-bg); }
+    table{ width:100%; border-collapse:collapse; font-size:11px; }
+    thead tr{ background:var(--primary-light); position:sticky; top:0; z-index:1; }
+    thead th{ padding:8px 8px; text-align:left; color:var(--primary); font-weight:700; font-size:10px; text-transform:uppercase; }
+    tbody tr{ border-bottom:1px solid var(--ring-bg); }
+    tbody tr:hover{ background:var(--tab-bg); }
+    tbody td{ padding:8px 8px; color:var(--text-light); }
+    .tag{ display:inline-block; padding:1px 7px; border-radius:999px; font-size:10px; font-weight:600; }
+    .tag.reminder{ background:#fff3e0; color:#e65100; }
+    .tag.drank   { background:#e0f7fa; color:#00796b; }
+    .tag.system  { background:#f3e5f5; color:#6a1b9a; }
+    .tag.snooze  { background:#fff8e1; color:#f57f17; }
+    .empty-log{ text-align:center; padding:24px 12px; color:var(--text-muted); font-size:12px; }
+
+    /* Install button */
+    .install-btn{
+      width:100%; padding:12px; background:linear-gradient(135deg,#9c27b0,#673ab7);
+      color:white; border:none; border-radius:14px; font-size:14px; font-weight:700;
+      cursor:pointer; display:none; margin-bottom:8px; transition:all 0.3s;
+    }
+    .install-btn:hover{ transform:translateY(-2px); }
+
+    /* Work schedule */
+    .schedule-row{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar{ width:4px; }
+    ::-webkit-scrollbar-thumb{ background:var(--border); border-radius:4px; }
+
+    /* Responsive */
+    @media(max-width:360px){ .wrapper{ padding:12px 8px 90px; } .card{ padding:18px 14px; } }
+  </style>
+</head>
+<body>
+
+<!-- ════ SPLASH SCREEN ════ -->
+<div id="splashScreen">
+  <div class="splash-icon">💧</div>
+  <h1>Aqua</h1>
+  <p>Smart Water Reminder</p>
+  <div class="splash-bar"><div class="splash-fill"></div></div>
+</div>
+
+<!-- ════ TOAST ════ -->
+<div class="toast" id="toast"></div>
+
+<!-- ════ BOTTOM NAV ════ -->
+<nav class="bottom-nav" id="bottomNav">
+  <button class="nav-item active" onclick="showScreen('home',this)">
+    <span class="nav-icon">🏠</span><span data-i18n="home">Home</span>
+  </button>
+  <button class="nav-item" onclick="showScreen('stats',this)">
+    <span class="nav-icon">📊</span><span data-i18n="stats">Stats</span>
+  </button>
+  <button class="nav-item" onclick="showScreen('achievements',this)">
+    <span class="nav-icon">🏆</span><span data-i18n="achievements">Awards</span>
+  </button>
+  <button class="nav-item" onclick="showScreen('settings',this)">
+    <span class="nav-icon">⚙️</span><span data-i18n="settings">Settings</span>
+  </button>
+  <button class="nav-item" onclick="showScreen('admin',this)">
+    <span class="nav-icon">👨‍💼</span><span data-i18n="admin">Admin</span>
+  </button>
+</nav>
+
+<div class="wrapper" id="mainWrapper">
+
+  <!-- ════ ONBOARDING ════ -->
+  <div class="card" id="onboardingScreen">
+    <div style="font-size:44px;margin-bottom:10px">💧</div>
+    <h2>Aqua</h2>
+    <p>Smart Water Reminder — Let's personalise your hydration plan!</p>
+    <div class="step-indicator">
+      <div class="step-dot active" id="dot0"></div>
+      <div class="step-dot" id="dot1"></div>
+      <div class="step-dot" id="dot2"></div>
+      <div class="step-dot" id="dot3"></div>
+    </div>
+
+    <div class="step active" id="step0">
+      <div class="step-icon">👤</div>
+      <h3>Basic Info</h3>
+      <p>Tell us about yourself</p>
+      <div class="form-group"><label>Full Name</label><input type="text" id="userName" placeholder="e.g. John Smith"/></div>
+      <div class="form-group"><label>Age (years)</label><input type="number" id="userAge" placeholder="e.g. 28" min="10" max="100"/></div>
+      <div class="form-group">
+        <label>Gender</label>
+        <div class="gender-grid">
+          <button class="gender-btn" onclick="selectGender('male',this)"><span class="g-icon">👨</span>Male</button>
+          <button class="gender-btn" onclick="selectGender('female',this)"><span class="g-icon">👩</span>Female</button>
+          <button class="gender-btn" onclick="selectGender('other',this)"><span class="g-icon">🧑</span>Other</button>
+        </div>
+      </div>
+      <button class="btn-next" onclick="nextStep(0)">Continue →</button>
+    </div>
+
+    <div class="step" id="step1">
+      <div class="step-icon">⚖️</div>
+      <h3>Body Measurements</h3>
+      <p>To calculate your exact water needs</p>
+      <div class="form-group"><label>Height (cm)</label><input type="number" id="userHeight" placeholder="e.g. 175" min="100" max="250"/></div>
+      <div class="form-group"><label>Weight (kg)</label><input type="number" id="userWeight" placeholder="e.g. 70" min="30" max="250"/></div>
+      <button class="btn-next" onclick="nextStep(1)">Continue →</button>
+      <button class="btn-back" onclick="prevStep(1)">← Back</button>
+    </div>
+
+    <div class="step" id="step2">
+      <div class="step-icon">🏃</div>
+      <h3>Activity Level</h3>
+      <p>During your typical work day</p>
+      <div class="activity-list">
+        <button class="activity-btn" onclick="selectActivity('sedentary',this)">
+          <span class="a-icon">🪑</span><span><span class="a-title">Sedentary</span><br/><span class="a-sub">Desk job, little movement</span></span>
+        </button>
+        <button class="activity-btn" onclick="selectActivity('light',this)">
+          <span class="a-icon">🚶</span><span><span class="a-title">Lightly Active</span><br/><span class="a-sub">Some walking, light tasks</span></span>
+        </button>
+        <button class="activity-btn" onclick="selectActivity('moderate',this)">
+          <span class="a-icon">🚴</span><span><span class="a-title">Moderately Active</span><br/><span class="a-sub">Regular movement, exercise</span></span>
+        </button>
+        <button class="activity-btn" onclick="selectActivity('active',this)">
+          <span class="a-icon">🏋️</span><span><span class="a-title">Very Active</span><br/><span class="a-sub">Physical job or intense training</span></span>
+        </button>
+      </div>
+      <button class="btn-next" onclick="nextStep(2)" style="margin-top:10px">Continue →</button>
+      <button class="btn-back" onclick="prevStep(2)">← Back</button>
+    </div>
+
+    <div class="step" id="step3">
+      <div class="step-icon">📊</div>
+      <h3>Your Hydration Plan</h3>
+      <p>Based on your profile:</p>
+      <div class="result-card" id="resultCard"></div>
+      <div class="form-group" style="text-align:left;margin-top:8px">
+        <label>⏱ Reminder Interval</label>
+        <select id="intervalSelect">
+          <option value="3600">Every 1 Hour</option>
+          <option value="1800">Every 30 Minutes</option>
+          <option value="2700">Every 45 Minutes</option>
+          <option value="7200">Every 2 Hours</option>
+          <option value="60">Every 1 Minute (Test)</option>
+        </select>
+      </div>
+      <div class="form-group" style="text-align:left">
+        <label>⏰ Work Schedule</label>
+        <div class="schedule-row">
+          <div><label style="font-size:10px">Start Time</label><input type="time" id="workStart" value="09:00"/></div>
+          <div><label style="font-size:10px">End Time</label><input type="time" id="workEnd" value="17:00"/></div>
+        </div>
+      </div>
+      <div class="form-group" style="text-align:left">
+        <label>🎯 Custom Water Goal (ml) — leave 0 for auto</label>
+        <input type="number" id="customGoal" placeholder="e.g. 2000" min="0" value="0"/>
+      </div>
+      <button class="btn-next" onclick="startApp()">🚀 Start My Reminder!</button>
+      <button class="btn-back" onclick="prevStep(3)">← Back</button>
+    </div>
+  </div>
+
+  <!-- ════ APP SCREENS ════ -->
+  <div id="appScreens" style="display:none">
+
+    <!-- HOME SCREEN -->
+    <div class="screen active" id="homeScreen">
+
+      <div class="card">
+        <div class="top-bar">
+          <div>
+            <div class="drop-icon">💧</div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="icon-btn" onclick="toggleDarkMode()" title="Dark Mode">🌙</button>
+            <button class="icon-btn" onclick="editProfile()" title="Edit Profile">✏️</button>
+          </div>
+        </div>
+
+        <div class="home-header">
+          <h1 id="appTitle">Water Reminder</h1>
+          <p id="appSubtitle">Stay hydrated!</p>
+        </div>
+
+        <div style="text-align:center">
+          <div class="firebase-badge connected" id="fbBadge">
+            <div class="fb-dot"></div><span id="fbStatus">🔥 Syncing…</span>
+          </div>
+          <br/>
+          <div class="profile-chip" onclick="editProfile()">
+            👤 <span id="profileChipText">Your Profile</span> ✏️
+          </div>
+        </div>
+
+        <!-- Weather Strip -->
+        <div class="weather-strip" id="weatherStrip" style="display:none">
+          <div>
+            <div class="weather-icon" id="weatherIcon">🌤️</div>
+          </div>
+          <div class="weather-info">
+            <div class="w-temp" id="weatherTemp">--°C</div>
+            <div class="w-desc" id="weatherDesc">Loading...</div>
+          </div>
+          <div class="weather-adj" id="weatherAdj">+0 ml today</div>
+        </div>
+
+        <!-- BMI Strip -->
+        <div class="bmi-strip" id="bmiStrip" style="display:none">
+          <div>
+            <div class="bmi-val" id="bmiVal">--</div>
+            <div class="bmi-label" id="bmiLabel">BMI</div>
+          </div>
+          <div class="bmi-info" id="bmiInfo">calculating...</div>
+        </div>
+
+        <div class="led-bar" id="ledBar"></div>
+
+        <!-- Water Animation -->
+        <div class="water-visual" id="waterVisual">
+          <div class="water-circle">
+            <div class="water-fill" id="waterFill" style="height:0%">
+              <div class="water-wave"></div>
+            </div>
+            <div class="water-text">
+              <div class="water-pct" id="waterPct">0%</div>
+              <div class="water-lbl">hydrated</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Countdown Ring -->
+        <div class="ring-container">
+          <svg viewBox="0 0 120 120">
+            <circle class="ring-bg" cx="60" cy="60" r="54"/>
+            <circle class="ring-progress" id="ringProgress" cx="60" cy="60" r="54"/>
+          </svg>
+          <div class="ring-text">
+            <div class="time" id="countdownDisplay">--:--</div>
+            <div class="label" id="ringLabel">not started</div>
+          </div>
+        </div>
+
+        <div style="text-align:center">
+          <div class="status-badge inactive" id="statusBadge">⏸ Reminder Off</div>
+        </div>
+
+        <div class="drink-target">
+          <div>
+            <div class="dt-val" id="perDrinkDisplay">-- ml</div>
+            <div class="dt-lbl">per drink</div>
+          </div>
+          <div class="dt-right">
+            Total Goal<br>
+            <strong id="totalGoalDisplay">-- L</strong><br>
+            <span style="font-size:10px;color:var(--text-muted)" id="remindersDisplay">-- reminders</span>
+          </div>
+        </div>
+
+        <div class="progress-section">
+          <div class="progress-label">
+            <span>💧 Daily Progress</span>
+            <span id="progressLabel">0 / 0 ml</span>
+          </div>
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="progressFill"></div>
+          </div>
+        </div>
+
+        <!-- Install PWA -->
+        <button class="install-btn" id="installBtn" onclick="installPWA()">
+          📲 Install App on Your Phone!
+        </button>
+
+        <!-- Sound -->
+        <div class="selector-row">
+          <label>🔔 Alert Sound + Voice:</label>
+          <div class="sound-row">
+            <select id="soundSelect">
+              <option value="chime">🎵 Chime + Voice</option>
+              <option value="bell">🔔 Bell + Voice</option>
+              <option value="beep">🔵 Beep + Voice</option>
+              <option value="alarm">🚨 Alarm + Voice</option>
+              <option value="droplet">💧 Droplet + Voice</option>
+              <option value="ding">✨ Ding + Voice</option>
+              <option value="voice_only">🗣️ Voice Only</option>
+              <option value="custom">📁 Custom Sound</option>
+            </select>
+            <button class="btn-preview" onclick="previewSound()">▶️</button>
+          </div>
+        </div>
+
+        <div class="selector-row">
+          <label>🔊 Volume:</label>
+          <input type="range" id="volumeRange" min="0" max="1" step="0.05" value="0.7" oninput="updateVolumeLabel()"/>
+          <div class="volume-label"><span>🔇</span><span id="volLabel">70%</span><span>🔊</span></div>
+        </div>
+
+        <button class="btn-main start" id="mainBtn" onclick="toggleReminder()">▶ Start Reminder</button>
+        <button class="btn-drank" id="drankBtn" onclick="logDrank()" disabled>✅ I Drank Water!</button>
+
+        <div class="stats">
+          <div class="stat"><div class="val" id="glassCount">0</div><div class="desc">Glasses</div></div>
+          <div class="stat"><div class="val" id="mlDrank">0ml</div><div class="desc">Consumed</div></div>
+          <div class="stat"><div class="val" id="reminderCount">0</div><div class="desc">Reminders</div></div>
+          <div class="stat"><div class="val" id="streakCount">0🔥</div><div class="desc">Streak</div></div>
+        </div>
+      </div>
+
+      <!-- Log -->
+      <div class="card">
+        <div class="log-header">
+          <h2>📋 Activity Log</h2>
+          <div class="log-actions">
+            <button class="btn-export" onclick="exportCSV()">📤 CSV</button>
+            <button class="btn-clear" onclick="clearLog()">🗑 Clear</button>
+          </div>
+        </div>
+        <div class="daily-summary">
+          <strong>📅 Today's Summary</strong>
+          <div class="summary-grid">
+            <div class="summary-item"><span id="sumGlasses">0</span>Glasses</div>
+            <div class="summary-item"><span id="sumReminders">0</span>Reminders</div>
+            <div class="summary-item"><span id="sumMl">0 ml</span>Intake</div>
+            <div class="summary-item"><span id="sumStreak">0</span>Streak 🔥</div>
+          </div>
+        </div>
+        <div class="filter-tabs">
+          <button class="filter-tab active" onclick="filterLog('all',this)">All</button>
+          <button class="filter-tab" onclick="filterLog('drank',this)">💧</button>
+          <button class="filter-tab" onclick="filterLog('reminder',this)">🔔</button>
+          <button class="filter-tab" onclick="filterLog('snooze',this)">😴</button>
+          <button class="filter-tab" onclick="filterLog('system',this)">⚙️</button>
+        </div>
+        <input class="log-search" type="text" id="logSearch" placeholder="🔍 Search logs..." oninput="renderTable()"/>
+        <div class="log-table-wrapper">
+          <table id="logTable">
+            <thead><tr><th>#</th><th>Time</th><th>Type</th><th>Event</th></tr></thead>
+            <tbody id="logBody"></tbody>
+          </table>
+          <div class="empty-log" id="emptyMsg"><div>📭</div>No logs yet!</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- STATS SCREEN -->
+    <div class="screen" id="statsScreen">
+      <div class="card">
+        <div class="section-title">📈 Weekly Water Intake</div>
+        <div class="chart-container">
+          <canvas id="weeklyChart" height="180"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">📅 Calendar View</div>
+        <div class="cal-nav">
+          <button onclick="changeMonth(-1)">← Prev</button>
+          <span id="calMonth">Month Year</span>
+          <button onclick="changeMonth(1)">Next →</button>
+        </div>
+        <div class="calendar-grid" id="calGrid"></div>
+      </div>
+
+      <div class="card">
+        <div class="section-title">📊 Monthly Report</div>
+        <div class="summary-cards" id="monthlyReport"></div>
+      </div>
+    </div>
+
+    <!-- ACHIEVEMENTS SCREEN -->
+    <div class="screen" id="achievementsScreen">
+      <div class="card">
+        <div class="section-title">🏆 Your Achievements</div>
+        <div class="badges-grid" id="badgesGrid"></div>
+      </div>
+    </div>
+
+    <!-- SETTINGS SCREEN -->
+    <div class="screen" id="settingsScreen">
+      <div class="card">
+
+        <div class="settings-section">
+          <h3>🎨 Appearance</h3>
+          <div class="setting-row">
+            <div><div class="setting-label">🌙 Dark Mode</div><div class="setting-sub">Switch to dark theme</div></div>
+            <label class="toggle"><input type="checkbox" id="darkToggle" onchange="toggleDarkMode()"/><span class="toggle-slider"></span></label>
+          </div>
+          <div class="setting-row">
+            <div><div class="setting-label">🎨 Theme Color</div></div>
+            <div class="theme-colors" id="themeColors"></div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>🌍 Language</h3>
+          <div class="lang-grid" id="langGrid">
+            <button class="lang-btn active" onclick="setLanguage('en',this)">🇬🇧 English</button>
+            <button class="lang-btn" onclick="setLanguage('hi',this)">🇮🇳 Hindi</button>
+            <button class="lang-btn" onclick="setLanguage('ar',this)">🇸🇦 Arabic</button>
+            <button class="lang-btn" onclick="setLanguage('es',this)">🇪🇸 Spanish</button>
+            <button class="lang-btn" onclick="setLanguage('fr',this)">🇫🇷 French</button>
+            <button class="lang-btn" onclick="setLanguage('de',this)">🇩🇪 German</button>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>🔔 Notifications</h3>
+          <div class="setting-row">
+            <div><div class="setting-label">🔕 Smart Reminders</div><div class="setting-sub">Skip if daily goal already met</div></div>
+            <label class="toggle"><input type="checkbox" id="smartToggle" onchange="saveSettings()"/><span class="toggle-slider"></span></label>
+          </div>
+          <div class="setting-row">
+            <div><div class="setting-label">📁 Custom Sound</div><div class="setting-sub">Upload your own reminder sound</div></div>
+          </div>
+          <div class="file-upload" onclick="document.getElementById('soundFile').click()">
+            📁 Click to upload sound file (mp3, wav, ogg)
+            <input type="file" id="soundFile" accept="audio/*" style="display:none" onchange="loadCustomSound(this)"/>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>📲 Share & Notify</h3>
+          <div class="setting-row">
+            <div><div class="setting-label">📱 WhatsApp Reminder</div><div class="setting-sub">Send reminder via WhatsApp</div></div>
+          </div>
+          <div class="form-group"><label>Your WhatsApp Number (with country code)</label><input type="tel" id="waNumber" placeholder="e.g. 919876543210" oninput="saveSettings()"/></div>
+          <a class="wa-btn" id="waLink" href="#" onclick="sendWhatsApp(event)">
+            💬 Send WhatsApp Reminder Now
+          </a>
+          <a class="email-btn" id="emailLink" href="#" onclick="sendEmailReport(event)">
+            📧 Email Daily Report
+          </a>
+          <div class="form-group" style="margin-top:8px"><label>Your Email Address</label><input type="email" id="userEmail" placeholder="e.g. john@gmail.com" oninput="saveSettings()"/></div>
+        </div>
+
+        <div class="settings-section">
+          <h3>⚙️ App</h3>
+          <div class="setting-row">
+            <div><div class="setting-label">🌡️ Weather Adjustment</div><div class="setting-sub">Increase water goal on hot days</div></div>
+            <label class="toggle"><input type="checkbox" id="weatherToggle" onchange="saveSettings();fetchWeather()"/><span class="toggle-slider"></span></label>
+          </div>
+          <div class="setting-row" onclick="editProfile()" style="cursor:pointer">
+            <div><div class="setting-label">👤 Edit Profile</div><div class="setting-sub">Change your personal details</div></div>
+            <span style="color:var(--text-muted)">→</span>
+          </div>
+          <div class="setting-row" onclick="clearAllData()" style="cursor:pointer">
+            <div><div class="setting-label" style="color:var(--danger)">🗑️ Reset All Data</div><div class="setting-sub">Clear everything and start over</div></div>
+            <span style="color:var(--danger)">→</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ADMIN DASHBOARD -->
+    <div class="screen" id="adminScreen">
+      <div class="card">
+        <div class="section-title">👨‍💼 Admin Dashboard</div>
+
+        <!-- Live Count -->
+        <div class="live-count">
+          <div><span class="live-dot"></span>Live Users</div>
+          <div class="lc-num" id="liveCount">--</div>
+          <div class="lc-lbl">people using your app</div>
+        </div>
+
+        <!-- Admin Stats -->
+        <div class="admin-stats" id="adminStats">
+          <div class="admin-stat"><div class="av" id="aTotal">--</div><div class="al">Total Users</div></div>
+          <div class="admin-stat"><div class="av" id="aGlasses">--</div><div class="al">Total Glasses</div></div>
+          <div class="admin-stat"><div class="av" id="aActive">--</div><div class="al">Active Today</div></div>
+        </div>
+
+        <!-- Export -->
+        <button class="btn-next" onclick="exportAllUsers()" style="margin-bottom:10px">📥 Export All Users CSV</button>
+
+        <!-- Map -->
+        <div class="section-title">🗺️ User Locations</div>
+        <div id="userMap"></div>
+
+        <!-- User List -->
+        <div class="section-title" style="margin-top:14px">👥 All Users</div>
+        <div id="userList"><div class="empty-log"><div>📭</div>Loading users...</div></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ════ NOTIFICATION MODAL ════ -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal">
+    <div class="pulse-ring"><div class="modal-icon">💧</div></div>
+    <div class="voice-status" id="voiceStatus" style="display:none">
+      <div class="voice-dot"></div> Speaking…
+    </div>
+    <h2>Time to Drink Water!</h2>
+    <div class="drink-amount" id="modalAmount">250 ml</div>
+    <p class="drink-sub">Drink this amount now to stay on track 💪</p>
+    <div class="tip-box">
+      <div class="tip-header">🌟 Health Tip</div>
+      <div class="tip-text" id="tipText">Loading...</div>
+    </div>
+    <div class="snooze-info" id="snoozeInfo"></div>
+    <div class="modal-btns">
+      <button class="btn-snooze" onclick="snoozeReminder()">😴 5 min</button>
+      <button class="btn-dismiss" onclick="dismissReminder()">✅ I Drank It!</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════
+//  TRANSLATIONS (Feature 3 — Multi Language)
+// ════════════════════════════════════════════════
+const translations = {
+  en:{ home:'Home', stats:'Stats', achievements:'Awards', settings:'Settings', admin:'Admin', timeTodrink:"It's time to drink water!", drinkAmount:'Please drink', ml:'millilitres now.', stayHydrated:'Stay hydrated and healthy!' },
+  hi:{ home:'होम', stats:'आँकड़े', achievements:'पुरस्कार', settings:'सेटिंग्स', admin:'एडमिन', timeTodrink:'पानी पीने का समय!', drinkAmount:'कृपया', ml:'मिलीलीटर पानी पियें।', stayHydrated:'हाइड्रेटेड रहें!' },
+  ar:{ home:'الرئيسية', stats:'إحصائيات', achievements:'إنجازات', settings:'إعدادات', admin:'المشرف', timeTodrink:'حان وقت شرب الماء!', drinkAmount:'يرجى شرب', ml:'مليلتر الآن.', stayHydrated:'ابق رطبًا وبصحة جيدة!' },
+  es:{ home:'Inicio', stats:'Estadísticas', achievements:'Logros', settings:'Ajustes', admin:'Admin', timeTodrink:'¡Es hora de beber agua!', drinkAmount:'Por favor bebe', ml:'mililitros ahora.', stayHydrated:'¡Mantente hidratado!' },
+  fr:{ home:'Accueil', stats:'Statistiques', achievements:'Succès', settings:'Paramètres', admin:'Admin', timeTodrink:"C'est l'heure de boire de l'eau!", drinkAmount:'Veuillez boire', ml:'millilitres maintenant.', stayHydrated:'Restez hydraté!' },
+  de:{ home:'Start', stats:'Statistiken', achievements:'Erfolge', settings:'Einstellungen', admin:'Admin', timeTodrink:'Zeit zu trinken!', drinkAmount:'Bitte trink', ml:'Milliliter jetzt.', stayHydrated:'Bleib hydratisiert!' }
+};
+
+// ════════════════════════════════════════════════
+//  THEME COLORS (Feature 21)
+// ════════════════════════════════════════════════
+const themes = [
+  { name:'Ocean',   primary:'#0288d1', secondary:'#0097a7' },
+  { name:'Forest',  primary:'#388e3c', secondary:'#00796b' },
+  { name:'Sunset',  primary:'#f57c00', secondary:'#e64a19' },
+  { name:'Purple',  primary:'#7b1fa2', secondary:'#512da8' },
+  { name:'Rose',    primary:'#c2185b', secondary:'#ad1457' },
+  { name:'Teal',    primary:'#00897b', secondary:'#00695c' }
+];
+
+// ════════════════════════════════════════════════
+//  ACHIEVEMENTS (Feature 8)
+// ════════════════════════════════════════════════
+const allBadges = [
+  { id:'first_drop',    icon:'💧', name:'First Drop',      desc:'Drink your first glass',          check:s=>s.totalGlasses>=1 },
+  { id:'hydration_5',   icon:'🌊', name:'Wave Rider',      desc:'Drink 5 glasses in a day',         check:s=>s.todayGlasses>=5 },
+  { id:'streak_3',      icon:'🔥', name:'On Fire',         desc:'3 day streak',                     check:s=>s.streak>=3 },
+  { id:'streak_7',      icon:'⚡', name:'Week Warrior',    desc:'7 day streak',                     check:s=>s.streak>=7 },
+  { id:'streak_30',     icon:'💎', name:'Diamond Drop',    desc:'30 day streak',                    check:s=>s.streak>=30 },
+  { id:'goal_100',      icon:'🎯', name:'Bullseye',        desc:'Hit 100% daily goal once',         check:s=>s.goalHits>=1 },
+  { id:'goal_7',        icon:'🏆', name:'Goal Getter',     desc:'Hit goal 7 days',                  check:s=>s.goalHits>=7 },
+  { id:'early_bird',    icon:'🌅', name:'Early Bird',      desc:'Drink water before 8am',           check:s=>s.earlyBird },
+  { id:'total_10',      icon:'🌟', name:'Ten Star',        desc:'Log 10 glasses ever',              check:s=>s.totalGlasses>=10 },
+  { id:'total_100',     icon:'🚀', name:'Hydro Hero',      desc:'Log 100 glasses ever',             check:s=>s.totalGlasses>=100 },
+  { id:'total_500',     icon:'👑', name:'Water King',      desc:'Log 500 glasses ever',             check:s=>s.totalGlasses>=500 },
+  { id:'night_owl',     icon:'🦉', name:'Night Owl',       desc:'Still drinking after 10pm',        check:s=>s.nightOwl },
+];
+
+// ════════════════════════════════════════════════
+//  HEALTH TIPS
+// ════════════════════════════════════════════════
+const healthTips = [
+  "💡 Drinking water first thing in the morning activates your internal organs.",
+  "🧠 Your brain is 75% water. Even mild dehydration impairs focus and memory.",
+  "🏃 Drinking water before exercise can boost performance by up to 25%.",
+  "❤️ Staying hydrated helps your heart pump blood more efficiently.",
+  "⚡ Fatigue is the first sign of dehydration — water is your natural energy drink!",
+  "🦷 Water washes away food particles and keeps your mouth clean.",
+  "💪 Muscles are 80% water — stay hydrated to avoid cramps.",
+  "🧴 Water keeps your skin elastic and reduces the appearance of wrinkles.",
+  "🩺 Hydration helps kidneys flush toxins and prevents kidney stones.",
+  "🌿 Herbal teas count too! Add mint or lemon for a twist.",
+  "😴 Dehydration can disrupt your sleep quality at night.",
+  "🍽️ A glass of water before meals reduces hunger and helps portion control.",
+  "🧬 Every cell in your body needs water to function — you're made of it!",
+  "🌊 The average adult loses 2.5 litres of water daily through breathing and sweat.",
+  "⏰ Regular water reminders are one of the simplest healthy habits you can build.",
+  "🫶 Drinking enough water can improve your mood and reduce anxiety.",
+  "🌞 On hot days, increase your water intake by 20–30%.",
+  "🥗 Leafy greens like spinach are over 90% water.",
+  "🏥 Staying hydrated reduces headache frequency — dehydration is a top trigger.",
+  "🔋 Water helps produce energy in your cells through cellular respiration.",
+  "🌱 Hydration supports healthy digestion and prevents constipation.",
+  "👁️ Your eyes need water to stay lubricated — reduce eye strain by staying hydrated.",
+  "🎯 Small consistent sips are more effective than gulping large amounts at once.",
+  "🔥 Drinking cold water can slightly boost your metabolism.",
+  "🩸 Water thins the blood slightly, reducing the risk of blood clots.",
+  "💧 Your body is roughly 60% water — maintaining that balance is essential!",
+  "🚿 Water carries nutrients to cells and removes waste from your body.",
+  "🍎 Fruits like watermelon and cucumber count toward your water intake!",
+  "📉 Proper hydration lowers risk of urinary tract infections.",
+  "🧘 Staying hydrated helps your body regulate temperature during exercise."
+];
+
+function getRandomTip(){ return healthTips[Math.floor(Math.random()*healthTips.length)]; }
+
+// ════════════════════════════════════════════════
+//  APP STATE
+// ════════════════════════════════════════════════
+let profile       = JSON.parse(localStorage.getItem('waterProfile')||'null');
+let logs          = JSON.parse(localStorage.getItem('waterLogs')||'[]');
+let streak        = parseInt(localStorage.getItem('waterStreak')||'0');
+let settings      = JSON.parse(localStorage.getItem('aquaSettings')||'{}');
+let achievData    = JSON.parse(localStorage.getItem('aquaAchiev')||'{}');
+let customAudioBuffer = null;
+let deferredPrompt    = null;
+let mapInstance       = null;
+let calYear = new Date().getFullYear(), calMonth = new Date().getMonth();
+let weatherBonus = 0;
+let currentLang  = settings.lang||'en';
+let currentFilter= 'all';
+let currentStep  = 0, selectedGender='', selectedActivity='';
+let isRunning=false, countdownInterval=null, snoozeInterval=null, soundRepeater=null;
+let secondsLeft=0, totalSeconds=3600, glassCount=0, reminderCount=0;
+let totalWaterMl=0, perDrinkMl=0, numReminders=0;
+const circumference = 2*Math.PI*54;
+
+// ════════════════════════════════════════════════
+//  SPLASH + INIT
+// ════════════════════════════════════════════════
+window.onload = () => {
+  applySettings();
+  setTimeout(()=>{
+    document.getElementById('splashScreen').style.opacity='0';
+    document.getElementById('splashScreen').style.transition='opacity 0.5s';
+    setTimeout(()=>{
+      document.getElementById('splashScreen').style.display='none';
+      if(profile){ launchApp(); }
+      else { document.getElementById('onboardingScreen').style.display='block'; }
+    },500);
+  },2800);
+};
+
+function launchApp(){
+  document.getElementById('onboardingScreen').style.display='none';
+  document.getElementById('appScreens').style.display='block';
+  document.getElementById('bottomNav').style.display='flex';
+  initApp();
+  registerServiceWorker();
+  setupPWAInstall();
+  fetchWeather();
+  setupLiveListeners();
+  drawWeeklyChart();
+  drawCalendar();
+  buildBadges();
+  buildThemeColors();
+  applyLanguage();
+  loadAdminDashboard();
+}
+
+// ════════════════════════════════════════════════
+//  SCREEN NAVIGATION
+// ════════════════════════════════════════════════
+function showScreen(name, btn){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(b=>b.classList.remove('active'));
+  document.getElementById(name+'Screen').classList.add('active');
+  if(btn) btn.classList.add('active');
+  if(name==='stats'){ drawWeeklyChart(); drawCalendar(); buildMonthlyReport(); }
+  if(name==='admin'){ loadAdminDashboard(); }
+  if(name==='achievements'){ buildBadges(); }
+}
+
+// ════════════════════════════════════════════════
+//  ONBOARDING
+// ════════════════════════════════════════════════
+function selectGender(g,btn){ selectedGender=g; document.querySelectorAll('.gender-btn').forEach(b=>b.classList.remove('selected')); btn.classList.add('selected'); }
+function selectActivity(a,btn){ selectedActivity=a; document.querySelectorAll('.activity-btn').forEach(b=>b.classList.remove('selected')); btn.classList.add('selected'); }
+
+function nextStep(from){
+  if(from===0){
+    if(!document.getElementById('userName').value.trim()){ showToast('Please enter your name ❗'); return; }
+    if(!document.getElementById('userAge').value){ showToast('Please enter your age ❗'); return; }
+    if(!selectedGender){ showToast('Please select your gender ❗'); return; }
+  }
+  if(from===1){
+    if(!document.getElementById('userHeight').value){ showToast('Please enter your height ❗'); return; }
+    if(!document.getElementById('userWeight').value){ showToast('Please enter your weight ❗'); return; }
+  }
+  if(from===2){
+    if(!selectedActivity){ showToast('Please select your activity level ❗'); return; }
+    showResults();
+  }
+  currentStep++; showStep(currentStep);
+}
+function prevStep(from){ currentStep--; showStep(currentStep); }
+function showStep(n){
+  document.querySelectorAll('.step').forEach((s,i)=>s.classList.toggle('active',i===n));
+  document.querySelectorAll('.step-dot').forEach((d,i)=>{
+    d.classList.remove('active','done');
+    if(i<n) d.classList.add('done');
+    if(i===n) d.classList.add('active');
+  });
+}
+
+function calculateWater(){
+  const weight=parseFloat(document.getElementById('userWeight').value);
+  const age=parseInt(document.getElementById('userAge').value);
+  let daily=weight*35;
+  if(selectedGender==='male') daily*=1.05;
+  if(selectedGender==='female') daily*=0.95;
+  if(age>=55) daily+=200;
+  if(age<18) daily-=100;
+  const actMap={sedentary:1.0,light:1.15,moderate:1.3,active:1.5};
+  daily*=(actMap[selectedActivity]||1.0);
+  const customGoal=parseInt(document.getElementById('customGoal').value)||0;
+  const dutyMl = customGoal>0 ? customGoal : Math.round(daily*0.6);
+  return { dailyMl:Math.round(daily), dutyMl };
+}
+
+function showResults(){
+  const {dailyMl,dutyMl}=calculateWater();
+  const interval=parseInt(document.getElementById('intervalSelect').value);
+  const numR=Math.floor((8*3600)/interval);
+  const per=Math.round(dutyMl/numR);
+  // BMI preview
+  const h=parseFloat(document.getElementById('userHeight').value)/100;
+  const w=parseFloat(document.getElementById('userWeight').value);
+  const bmi=(w/(h*h)).toFixed(1);
+  document.getElementById('resultCard').innerHTML=`
+    <h4 style="color:var(--primary);font-size:13px;margin-bottom:10px">🧮 Your Hydration Plan</h4>
+    <div class="result-grid">
+      <div class="result-item highlight"><div class="r-val">${(dutyMl/1000).toFixed(2)} L</div><div class="r-lbl">8-hour duty target</div></div>
+      <div class="result-item"><div class="r-val">${(dailyMl/1000).toFixed(1)} L</div><div class="r-lbl">Full day total</div></div>
+      <div class="result-item"><div class="r-val">${numR}</div><div class="r-lbl">Reminders</div></div>
+      <div class="result-item"><div class="r-val">${per} ml</div><div class="r-lbl">Per drink</div></div>
+      <div class="result-item"><div class="r-val">BMI ${bmi}</div><div class="r-lbl">${getBMILabel(parseFloat(bmi))}</div></div>
+    </div>`;
+  document.getElementById('intervalSelect').onchange=showResults;
+  document.getElementById('customGoal').oninput=showResults;
+}
+
+function getBMILabel(bmi){
+  if(bmi<18.5) return '⚠️ Underweight';
+  if(bmi<25)   return '✅ Normal';
+  if(bmi<30)   return '⚠️ Overweight';
+  return '❗ Obese';
+}
+
+function startApp(){
+  const {dailyMl,dutyMl}=calculateWater();
+  profile={
+    name:    document.getElementById('userName').value.trim(),
+    age:     parseInt(document.getElementById('userAge').value),
+    gender:  selectedGender,
+    height:  parseFloat(document.getElementById('userHeight').value),
+    weight:  parseFloat(document.getElementById('userWeight').value),
+    activity:selectedActivity,
+    dailyMl, dutyMl,
+    interval:parseInt(document.getElementById('intervalSelect').value),
+    workStart:document.getElementById('workStart').value||'09:00',
+    workEnd:  document.getElementById('workEnd').value||'17:00',
+    customGoal:parseInt(document.getElementById('customGoal').value)||0,
+    firstSeen:new Date().toISOString()
+  };
+  localStorage.setItem('waterProfile',JSON.stringify(profile));
+  if(typeof window.saveProfileToFirebase==='function') window.saveProfileToFirebase(profile);
+  launchApp();
+}
+
+function editProfile(){
+  if(!confirm('Edit profile? Reminder will stop.')) return;
+  stopReminder();
+  localStorage.removeItem('waterProfile');
+  profile=null; selectedGender=''; selectedActivity=''; currentStep=0;
+  showStep(0);
+  document.getElementById('appScreens').style.display='none';
+  document.getElementById('bottomNav').style.display='none';
+  document.getElementById('onboardingScreen').style.display='block';
+}
+
+// ════════════════════════════════════════════════
+//  APP INIT
+// ════════════════════════════════════════════════
+function initApp(){
+  totalSeconds  = profile.interval;
+  totalWaterMl  = profile.dutyMl;
+  numReminders  = Math.floor((8*3600)/totalSeconds);
+  perDrinkMl    = Math.round(totalWaterMl/numReminders);
+
+  document.getElementById('appTitle').textContent    = `Hi, ${profile.name}! 👋`;
+  document.getElementById('appSubtitle').textContent = `Goal: ${(totalWaterMl/1000).toFixed(2)}L in 8 hours`;
+  document.getElementById('profileChipText').textContent = `${profile.name} · ${profile.weight}kg`;
+  document.getElementById('perDrinkDisplay').textContent = `${perDrinkMl} ml`;
+  document.getElementById('totalGoalDisplay').textContent= `${(totalWaterMl/1000).toFixed(2)} L`;
+  document.getElementById('remindersDisplay').textContent= `${numReminders} reminders`;
+  document.getElementById('modalAmount').textContent     = `${perDrinkMl} ml`;
+
+  // BMI
+  const h=profile.height/100, bmi=(profile.weight/(h*h)).toFixed(1);
+  document.getElementById('bmiVal').textContent  = bmi;
+  document.getElementById('bmiLabel').textContent= 'BMI';
+  document.getElementById('bmiInfo').textContent = getBMILabel(parseFloat(bmi));
+  document.getElementById('bmiStrip').style.display='flex';
+
+  if(typeof window.saveProfileToFirebase==='function') window.saveProfileToFirebase(profile);
+  syncStats(); renderTable(); updateSummary(); updateProgress();
+
+  // Load settings UI
+  if(settings.waNumber) document.getElementById('waNumber').value=settings.waNumber;
+  if(settings.email)    document.getElementById('userEmail').value=settings.email;
+  if(settings.smart)    document.getElementById('smartToggle').checked=true;
+  if(settings.weather)  document.getElementById('weatherToggle').checked=true;
+  if(settings.dark)     document.getElementById('darkToggle').checked=true;
+}
+
+// ════════════════════════════════════════════════
+//  SOUND ENGINE
+// ════════════════════════════════════════════════
+function getAudioCtx(){ return new(window.AudioContext||window.webkitAudioContext)(); }
+function getVolume()  { return parseFloat(document.getElementById('volumeRange').value); }
+function updateVolumeLabel(){ document.getElementById('volLabel').textContent=Math.round(getVolume()*100)+'%'; }
+
+function playBeep(v)   { const c=getAudioCtx(),o=c.createOscillator(),g=c.createGain(); o.connect(g);g.connect(c.destination);o.type='square';o.frequency.setValueAtTime(880,c.currentTime);g.gain.setValueAtTime(v*.4,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+.4);o.start();o.stop(c.currentTime+.4); }
+function playChime(v)  { const c=getAudioCtx(); [523,659,784,1047].forEach((f,i)=>{ const o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);o.type='sine';const t=c.currentTime+i*.18;o.frequency.setValueAtTime(f,t);g.gain.setValueAtTime(v*.35,t);g.gain.exponentialRampToValueAtTime(.001,t+.6);o.start(t);o.stop(t+.7); }); }
+function playBell(v)   { const c=getAudioCtx(),o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);o.type='sine';o.frequency.setValueAtTime(1400,c.currentTime);o.frequency.exponentialRampToValueAtTime(700,c.currentTime+1.2);g.gain.setValueAtTime(v*.5,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+1.5);o.start();o.stop(c.currentTime+1.5); }
+function playAlarm(v)  { const c=getAudioCtx();[0,.3,.6].forEach(off=>{ const o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);o.type='sawtooth';o.frequency.setValueAtTime(440,c.currentTime+off);o.frequency.setValueAtTime(880,c.currentTime+off+.15);g.gain.setValueAtTime(v*.3,c.currentTime+off);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+off+.28);o.start(c.currentTime+off);o.stop(c.currentTime+off+.3); }); }
+function playDroplet(v){ const c=getAudioCtx(),o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);o.type='sine';o.frequency.setValueAtTime(1800,c.currentTime);o.frequency.exponentialRampToValueAtTime(400,c.currentTime+.5);g.gain.setValueAtTime(v*.45,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+.5);o.start();o.stop(c.currentTime+.5); }
+function playDing(v)   { const c=getAudioCtx();[0,.25].forEach((t,i)=>{ const o=c.createOscillator(),g=c.createGain();o.connect(g);g.connect(c.destination);o.type='sine';o.frequency.setValueAtTime(i?1319:1047,c.currentTime+t);g.gain.setValueAtTime(v*.4,c.currentTime+t);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+t+.8);o.start(c.currentTime+t);o.stop(c.currentTime+t+.9); }); }
+
+// Feature 14: Custom Sound Upload
+function loadCustomSound(input){
+  const file=input.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=async e=>{
+    try{
+      const ctx=getAudioCtx();
+      customAudioBuffer=await ctx.decodeAudioData(e.target.result);
+      showToast('✅ Custom sound loaded! Select "Custom Sound" in alert settings.');
+    } catch(err){ showToast('❌ Could not load sound file'); }
+  };
+  reader.readAsArrayBuffer(file);
+}
+function playCustomSound(v){
+  if(!customAudioBuffer){ playChime(v); return; }
+  const ctx=getAudioCtx(), src=ctx.createBufferSource(), g=ctx.createGain();
+  src.buffer=customAudioBuffer; g.gain.setValueAtTime(v,ctx.currentTime);
+  src.connect(g); g.connect(ctx.destination); src.start();
+}
+
+const soundMap={beep:playBeep,chime:playChime,bell:playBell,alarm:playAlarm,droplet:playDroplet,ding:playDing,custom:playCustomSound};
+
+// Feature: Voice
+function speak(msg,onEnd){
+  if(!('speechSynthesis' in window)){ if(onEnd)onEnd(); return; }
+  window.speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(msg);
+  u.rate=0.95; u.pitch=1.05; u.volume=getVolume();
+  const vs=document.getElementById('voiceStatus');
+  const voices=window.speechSynthesis.getVoices();
+  const pref=voices.find(v=>v.name.includes('Samantha')||v.name.includes('Karen')||v.name.includes('Google UK English Female')||v.name.includes('Microsoft Zira'));
+  if(pref) u.voice=pref;
+  if(vs) vs.style.display='inline-flex';
+  u.onend=u.onerror=()=>{ if(vs)vs.style.display='none'; if(onEnd)onEnd(); };
+  window.speechSynthesis.speak(u);
+}
+
+function playSound(){
+  try{
+    const type=document.getElementById('soundSelect').value;
+    const vol=getVolume(); if(vol===0) return;
+    if(type!=='voice_only'&&soundMap[type]) soundMap[type](vol);
+    setTimeout(()=>{
+      const t=translations[currentLang]||translations.en;
+      const msg=`Hey ${profile?profile.name:'there'}! ${t.timeTodrink} ${t.drinkAmount} ${perDrinkMl} ${t.ml} ${t.stayHydrated}`;
+      speak(msg);
+    },600);
+  } catch(e){}
+}
+
+function previewSound(){
+  const type=document.getElementById('soundSelect').value;
+  const vol=getVolume();
+  if(type!=='voice_only'&&soundMap[type]) soundMap[type](vol);
+  setTimeout(()=>{
+    const t=translations[currentLang]||translations.en;
+    speak(`Hi ${profile?profile.name:'there'}! ${t.timeTodrink} ${t.drinkAmount} ${perDrinkMl||250} ${t.ml}`);
+  },400);
+}
+
+function startSoundRepeater(){ playSound(); soundRepeater=setInterval(playSound,8000); }
+function stopSoundRepeater(){
+  clearInterval(soundRepeater); soundRepeater=null;
+  if('speechSynthesis' in window) window.speechSynthesis.cancel();
+  const vs=document.getElementById('voiceStatus');
+  if(vs) vs.style.display='none';
+}
+
+// ════════════════════════════════════════════════
+//  REMINDER ENGINE
+// ════════════════════════════════════════════════
+function toggleReminder(){ isRunning?stopReminder():startReminder(); }
+
+function startReminder(){
+  if("Notification" in window&&Notification.permission==="default") Notification.requestPermission();
+
+  // Feature 4: Work Schedule — check if within work hours
+  if(profile.workStart&&profile.workEnd){
+    const now=new Date();
+    const [sh,sm]=profile.workStart.split(':').map(Number);
+    const [eh,em]=profile.workEnd.split(':').map(Number);
+    const startMin=sh*60+sm, endMin=eh*60+em;
+    const nowMin=now.getHours()*60+now.getMinutes();
+    if(nowMin<startMin||nowMin>endMin){
+      showToast(`⏰ Outside work hours (${profile.workStart}–${profile.workEnd}). Starting anyway!`);
+    }
+  }
+
+  isRunning=true; secondsLeft=totalSeconds;
+  document.getElementById('mainBtn').textContent='⏹ Stop Reminder';
+  document.getElementById('mainBtn').className='btn-main stop';
+  document.getElementById('statusBadge').textContent='🟢 Reminder Active';
+  document.getElementById('statusBadge').className='status-badge active';
+  document.getElementById('drankBtn').disabled=false;
+  document.getElementById('ringLabel').textContent='next reminder';
+  document.getElementById('ledBar').classList.add('active');
+  updateRing(); updateDisplay();
+
+  countdownInterval=setInterval(()=>{
+    secondsLeft--;
+    updateDisplay(); updateRing();
+    if(secondsLeft<=0){ triggerReminder(); secondsLeft=totalSeconds; }
+  },1000);
+  addLog('system','⚙️','Reminder session started');
+}
+
+function stopReminder(){
+  clearInterval(countdownInterval); clearInterval(snoozeInterval);
+  stopSoundRepeater(); closeModal(); isRunning=false;
+  document.getElementById('mainBtn').textContent='▶ Start Reminder';
+  document.getElementById('mainBtn').className='btn-main start';
+  document.getElementById('statusBadge').textContent='⏸ Reminder Off';
+  document.getElementById('statusBadge').className='status-badge inactive';
+  document.getElementById('drankBtn').disabled=true;
+  document.getElementById('countdownDisplay').textContent='--:--';
+  document.getElementById('ringLabel').textContent='not started';
+  document.getElementById('ringProgress').style.strokeDashoffset=0;
+  document.getElementById('ledBar').classList.remove('active');
+  addLog('system','⚙️','Reminder session stopped');
+}
+
+function triggerReminder(){
+  // Feature 15: Smart Reminders — skip if goal already met
+  if(settings.smart){
+    const drank=glassCount*perDrinkMl;
+    if(drank>=totalWaterMl+weatherBonus){
+      showToast('🎉 Daily goal already met! Reminder skipped.');
+      return;
+    }
+  }
+
+  reminderCount++;
+  document.getElementById('reminderCount').textContent=reminderCount;
+
+  if(Notification.permission==='granted'){
+    new Notification(`💧 ${profile.name}, Time to Drink!`,{
+      body:`Please drink ${perDrinkMl} ml now.`,
+      icon:'https://em-content.zobj.net/source/apple/391/droplet_1f4a7.png'
+    });
+  }
+
+  document.getElementById('tipText').textContent=getRandomTip();
+  showModal(); startSoundRepeater();
+  addLog('reminder','🔔',`Reminder #${reminderCount} — drink ${perDrinkMl} ml`);
+  updateSummary();
+
+  if(typeof window.logEventToFirebase==='function')
+    window.logEventToFirebase('reminder',`Reminder #${reminderCount}`,{amount_ml:perDrinkMl});
+
+  // Feature 12: WhatsApp reminder
+  if(settings.autoWa&&settings.waNumber){
+    const msg=encodeURIComponent(`💧 Aqua Reminder: Time to drink ${perDrinkMl}ml of water!`);
+    window.open(`https://wa.me/${settings.waNumber}?text=${msg}`,'_blank');
+  }
+}
+
+// ════════════════════════════════════════════════
+//  MODAL
+// ════════════════════════════════════════════════
+function showModal(){ document.getElementById('modalOverlay').classList.add('show'); document.getElementById('snoozeInfo').textContent=''; }
+function closeModal(){ document.getElementById('modalOverlay').classList.remove('show'); stopSoundRepeater(); clearInterval(snoozeInterval); document.getElementById('snoozeInfo').textContent=''; }
+function dismissReminder(){ closeModal(); logDrank(); }
+function snoozeReminder(){
+  stopSoundRepeater(); clearInterval(snoozeInterval);
+  let sl=300;
+  document.getElementById('snoozeInfo').textContent='⏰ Snoozed! Reminding in 5:00';
+  addLog('snooze','😴','Reminder snoozed 5 minutes');
+  snoozeInterval=setInterval(()=>{
+    sl--;
+    const m=String(Math.floor(sl/60)).padStart(2,'0'), s=String(sl%60).padStart(2,'0');
+    document.getElementById('snoozeInfo').textContent=`⏰ Snoozed! Reminding in ${m}:${s}`;
+    if(sl<=0){
+      clearInterval(snoozeInterval);
+      document.getElementById('snoozeInfo').textContent='';
+      document.getElementById('tipText').textContent=getRandomTip();
+      startSoundRepeater();
+      addLog('reminder','🔔','Snooze ended!');
+    }
+  },1000);
+}
+
+// ════════════════════════════════════════════════
+//  LOG WATER
+// ════════════════════════════════════════════════
+function logDrank(){
+  glassCount++;
+  const total=glassCount*perDrinkMl;
+  document.getElementById('glassCount').textContent=glassCount;
+  document.getElementById('mlDrank').textContent=total+'ml';
+  addLog('drank','💧',`Drank ${perDrinkMl} ml (total: ${total} ml)`);
+
+  // Check early bird
+  const h=new Date().getHours();
+  if(h<8){ achievData.earlyBird=true; localStorage.setItem('aquaAchiev',JSON.stringify(achievData)); }
+  if(h>=22){ achievData.nightOwl=true; localStorage.setItem('aquaAchiev',JSON.stringify(achievData)); }
+
+  updateStreak(); updateSummary(); updateProgress();
+  checkAchievements();
+
+  if(typeof window.logEventToFirebase==='function')
+    window.logEventToFirebase('drank',`Drank ${perDrinkMl} ml`,{amount_ml:perDrinkMl,total_ml:total,glass:glassCount});
+  if(typeof window.updateStatsInFirebase==='function')
+    window.updateStatsInFirebase({name:profile.name,glasses_drank:glassCount,total_ml_consumed:total,goal_ml:totalWaterMl,completion_pct:Math.round((total/totalWaterMl)*100)});
+}
+
+// ════════════════════════════════════════════════
+//  RING & TIMER
+// ════════════════════════════════════════════════
+function updateDisplay(){
+  const m=String(Math.floor(secondsLeft/60)).padStart(2,'0');
+  const s=String(secondsLeft%60).padStart(2,'0');
+  document.getElementById('countdownDisplay').textContent=`${m}:${s}`;
+}
+function updateRing(){
+  const offset=circumference*(1-secondsLeft/totalSeconds);
+  document.getElementById('ringProgress').style.strokeDasharray=circumference;
+  document.getElementById('ringProgress').style.strokeDashoffset=offset;
+}
+
+// ════════════════════════════════════════════════
+//  PROGRESS + WATER ANIMATION (Feature 22)
+// ════════════════════════════════════════════════
+function updateProgress(){
+  const drank=glassCount*perDrinkMl;
+  const goal=totalWaterMl+weatherBonus;
+  const pct=Math.min((drank/goal)*100,100);
+  document.getElementById('progressFill').style.width=pct+'%';
+  document.getElementById('progressLabel').textContent=`${drank} / ${goal} ml`;
+
+  // Water animation
+  document.getElementById('waterFill').style.height=pct+'%';
+  document.getElementById('waterPct').textContent=Math.round(pct)+'%';
+
+  // Save goal hit
+  if(pct>=100){
+    achievData.goalHits=(achievData.goalHits||0)+1;
+    localStorage.setItem('aquaAchiev',JSON.stringify(achievData));
+  }
+}
+
+// ════════════════════════════════════════════════
+//  WEATHER (Feature 6)
+// ════════════════════════════════════════════════
+async function fetchWeather(){
+  if(!settings.weather) return;
+  try{
+    if(!navigator.geolocation){ return; }
+    navigator.geolocation.getCurrentPosition(async pos=>{
+      const {latitude:lat,longitude:lon}=pos.coords;
+      const res=await fetch(`https://wttr.in/${lat},${lon}?format=j1`);
+      const data=await res.json();
+      const temp=parseInt(data.current_condition[0].temp_C);
+      const desc=data.current_condition[0].weatherDesc[0].value;
+      const icon=temp>35?'🌡️':temp>25?'☀️':temp>15?'🌤️':'🌥️';
+
+      // Weather bonus: +250ml if >30°C, +500ml if >35°C
+      weatherBonus = temp>35?500:temp>30?250:0;
+
+      document.getElementById('weatherIcon').textContent=icon;
+      document.getElementById('weatherTemp').textContent=temp+'°C';
+      document.getElementById('weatherDesc').textContent=desc;
+      document.getElementById('weatherAdj').textContent=weatherBonus>0?`+${weatherBonus}ml today`:'No adjustment';
+      document.getElementById('weatherStrip').style.display='flex';
+      updateProgress();
+    });
+  } catch(e){ console.log('Weather fetch failed'); }
+}
+
+// ════════════════════════════════════════════════
+//  WEEKLY CHART (Feature 7)
+// ════════════════════════════════════════════════
+function drawWeeklyChart(){
+  const canvas=document.getElementById('weeklyChart');
+  if(!canvas) return;
+  const ctx=canvas.getContext('2d');
+  const W=canvas.offsetWidth||340, H=180;
+  canvas.width=W; canvas.height=H;
+
+  // Get last 7 days data
+  const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const today=new Date();
+  const data=[];
+  for(let i=6;i>=0;i--){
+    const d=new Date(today); d.setDate(d.getDate()-i);
+    const dateStr=d.toLocaleDateString();
+    const dayLogs=logs.filter(l=>l.date===dateStr&&l.type==='drank');
+    data.push({ day:days[d.getDay()===0?6:d.getDay()-1], ml:dayLogs.length*(perDrinkMl||250) });
+  }
+
+  const maxMl=Math.max(...data.map(d=>d.ml),totalWaterMl,1);
+  const barW=(W-60)/(data.length*1.5);
+  const gap=barW*0.5;
+  const botPad=30, topPad=10;
+  const chartH=H-botPad-topPad;
+
+  ctx.clearRect(0,0,W,H);
+
+  // Goal line
+  const goalY=topPad+chartH*(1-totalWaterMl/maxMl);
+  ctx.strokeStyle='rgba(2,136,209,0.3)'; ctx.setLineDash([4,4]); ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(30,goalY); ctx.lineTo(W-10,goalY); ctx.stroke();
+  ctx.setLineDash([]); ctx.fillStyle='rgba(2,136,209,0.5)'; ctx.font='9px sans-serif';
+  ctx.fillText('Goal',W-36,goalY-3);
+
+  data.forEach((d,i)=>{
+    const x=30+i*(barW+gap)+gap/2;
+    const barH=Math.max((d.ml/maxMl)*chartH,2);
+    const y=topPad+chartH-barH;
+    const isGoal=d.ml>=totalWaterMl;
+
+    // Bar
+    const grad=ctx.createLinearGradient(0,y,0,y+barH);
+    grad.addColorStop(0, isGoal?'#00acc1':'#29b6f6');
+    grad.addColorStop(1, isGoal?'#0097a7':'#0288d1');
+    ctx.fillStyle=grad;
+    ctx.beginPath();
+    ctx.roundRect?ctx.roundRect(x,y,barW,barH,4):ctx.rect(x,y,barW,barH);
+    ctx.fill();
+
+    // Value
+    if(d.ml>0){ ctx.fillStyle='#0277bd'; ctx.font='bold 9px sans-serif'; ctx.textAlign='center'; ctx.fillText(d.ml+'ml',x+barW/2,y-3); }
+
+    // Day label
+    ctx.fillStyle='#90a4ae'; ctx.font='10px sans-serif'; ctx.textAlign='center';
+    ctx.fillText(d.day,x+barW/2,H-8);
+  });
+}
+
+// ════════════════════════════════════════════════
+//  CALENDAR VIEW (Feature 9)
+// ════════════════════════════════════════════════
+function drawCalendar(){
+  const grid=document.getElementById('calGrid'); if(!grid) return;
+  document.getElementById('calMonth').textContent=new Date(calYear,calMonth).toLocaleDateString('en',{month:'long',year:'numeric'});
+
+  const days=['Su','Mo','Tu','We','Th','Fr','Sa'];
+  grid.innerHTML='';
+  days.forEach(d=>{ const el=document.createElement('div'); el.className='cal-header'; el.textContent=d; grid.appendChild(el); });
+
+  const firstDay=new Date(calYear,calMonth,1).getDay();
+  const daysInMonth=new Date(calYear,calMonth+1,0).getDate();
+  const today=new Date();
+
+  for(let i=0;i<firstDay;i++){ const el=document.createElement('div'); el.className='cal-day empty'; grid.appendChild(el); }
+
+  for(let d=1;d<=daysInMonth;d++){
+    const el=document.createElement('div');
+    const date=new Date(calYear,calMonth,d);
+    const dateStr=date.toLocaleDateString();
+    const dayLogs=logs.filter(l=>l.date===dateStr&&l.type==='drank');
+    const ml=dayLogs.length*(perDrinkMl||250);
+    const pct=totalWaterMl>0?ml/totalWaterMl:0;
+
+    el.className='cal-day';
+    el.textContent=d;
+    if(date.toDateString()===today.toDateString()) el.classList.add('today');
+    if(pct>=1) el.classList.add('goal-met');
+    else if(pct>0) el.classList.add('partial');
+
+    el.title=`${dateStr}: ${ml}ml / ${totalWaterMl}ml`;
+    grid.appendChild(el);
+  }
+}
+function changeMonth(dir){ calMonth+=dir; if(calMonth<0){calMonth=11;calYear--;} if(calMonth>11){calMonth=0;calYear++;} drawCalendar(); }
+
+// ════════════════════════════════════════════════
+//  MONTHLY REPORT (Feature 11)
+// ════════════════════════════════════════════════
+function buildMonthlyReport(){
+  const container=document.getElementById('monthlyReport'); if(!container) return;
+  const now=new Date();
+  const monthStr=now.toLocaleDateString('en',{month:'long',year:'numeric'});
+  const thisMonth=now.getMonth(), thisYear=now.getFullYear();
+  const monthLogs=logs.filter(l=>{
+    const d=new Date(l.date);
+    return d.getMonth()===thisMonth&&d.getFullYear()===thisYear;
+  });
+  const drankLogs=monthLogs.filter(l=>l.type==='drank');
+  const totalMl=drankLogs.length*(perDrinkMl||250);
+  const daysActive=new Set(drankLogs.map(l=>l.date)).size;
+  const avgMl=daysActive>0?Math.round(totalMl/daysActive):0;
+  const goalDays=Array.from(new Set(drankLogs.map(l=>l.date))).filter(date=>{
+    const cnt=drankLogs.filter(l=>l.date===date).length;
+    return cnt*(perDrinkMl||250)>=totalWaterMl;
+  }).length;
+
+  container.innerHTML=`
+    <div class="summary-card"><div class="sc-val">${(totalMl/1000).toFixed(1)}L</div><div class="sc-lbl">Total This Month</div></div>
+    <div class="summary-card"><div class="sc-val">${daysActive}</div><div class="sc-lbl">Days Active</div></div>
+    <div class="summary-card"><div class="sc-val">${avgMl}ml</div><div class="sc-lbl">Daily Average</div></div>
+    <div class="summary-card"><div class="sc-val">${goalDays}</div><div class="sc-lbl">Goal Hit Days</div></div>
+  `;
+}
+
+// ════════════════════════════════════════════════
+//  ACHIEVEMENTS (Feature 8)
+// ════════════════════════════════════════════════
+function checkAchievements(){
+  const today=new Date().toLocaleDateString();
+  const todayLogs=logs.filter(l=>l.date===today&&l.type==='drank');
+  const state={
+    totalGlasses: logs.filter(l=>l.type==='drank').length,
+    todayGlasses: todayLogs.length,
+    streak: streak,
+    goalHits: achievData.goalHits||0,
+    earlyBird: achievData.earlyBird||false,
+    nightOwl: achievData.nightOwl||false
+  };
+  let newBadge=false;
+  allBadges.forEach(b=>{
+    if(!achievData[b.id]&&b.check(state)){
+      achievData[b.id]=true;
+      newBadge=true;
+      showToast(`🏆 Achievement unlocked: ${b.name} ${b.icon}`);
+    }
+  });
+  if(newBadge){ achievData.goalHits=state.goalHits; localStorage.setItem('aquaAchiev',JSON.stringify(achievData)); }
+}
+
+function buildBadges(){
+  const grid=document.getElementById('badgesGrid'); if(!grid) return;
+  const today=new Date().toLocaleDateString();
+  const todayGlasses=logs.filter(l=>l.date===today&&l.type==='drank').length;
+  const state={ totalGlasses:logs.filter(l=>l.type==='drank').length, todayGlasses, streak, goalHits:achievData.goalHits||0, earlyBird:achievData.earlyBird||false, nightOwl:achievData.nightOwl||false };
+
+  grid.innerHTML='';
+  allBadges.forEach(b=>{
+    const unlocked=!!achievData[b.id];
+    const el=document.createElement('div');
+    el.className='badge-card '+(unlocked?'unlocked':'locked');
+    el.innerHTML=`
+      <div class="badge-icon">${b.icon}</div>
+      <div class="badge-name">${b.name}</div>
+      <div class="badge-desc">${b.desc}</div>
+      ${unlocked?'<div class="badge-new">✅</div>':''}
+    `;
+    grid.appendChild(el);
+  });
+}
+
+// ════════════════════════════════════════════════
+//  SETTINGS
+// ════════════════════════════════════════════════
+function saveSettings(){
+  settings.waNumber = document.getElementById('waNumber')?.value||'';
+  settings.email    = document.getElementById('userEmail')?.value||'';
+  settings.smart    = document.getElementById('smartToggle')?.checked||false;
+  settings.weather  = document.getElementById('weatherToggle')?.checked||false;
+  settings.dark     = document.getElementById('darkToggle')?.checked||false;
+  localStorage.setItem('aquaSettings',JSON.stringify(settings));
+}
+
+// Feature 1: Dark Mode
+function toggleDarkMode(){
+  const isDark=document.documentElement.getAttribute('data-theme')==='dark';
+  document.documentElement.setAttribute('data-theme',isDark?'light':'dark');
+  settings.dark=!isDark;
+  const toggle=document.getElementById('darkToggle');
+  if(toggle) toggle.checked=!isDark;
+  localStorage.setItem('aquaSettings',JSON.stringify(settings));
+}
+
+// Feature 21: Theme Colors
+function buildThemeColors(){
+  const container=document.getElementById('themeColors'); if(!container) return;
+  container.innerHTML='';
+  themes.forEach((t,i)=>{
+    const dot=document.createElement('div');
+    dot.className='theme-dot'+(i===0?' active':'');
+    dot.style.background=t.primary;
+    dot.title=t.name;
+    dot.onclick=()=>applyTheme(t,dot);
+    container.appendChild(dot);
+  });
+}
+
+function applyTheme(t,dot){
+  document.documentElement.style.setProperty('--primary',t.primary);
+  document.documentElement.style.setProperty('--primary-dark',t.primary);
+  document.documentElement.style.setProperty('--secondary',t.secondary);
+  document.documentElement.style.setProperty('--accent',t.secondary);
+  document.documentElement.style.setProperty('--primary-light',t.primary+'22');
+  document.getElementById('themeColorMeta').content=t.primary;
+  document.querySelectorAll('.theme-dot').forEach(d=>d.classList.remove('active'));
+  if(dot) dot.classList.add('active');
+  settings.theme=t; localStorage.setItem('aquaSettings',JSON.stringify(settings));
+}
+
+function applySettings(){
+  if(settings.dark) document.documentElement.setAttribute('data-theme','dark');
+  if(settings.theme) applyTheme(settings.theme,null);
+  if(settings.lang) setLanguage(settings.lang,null);
+}
+
+// Feature 3: Multi Language
+function setLanguage(lang,btn){
+  currentLang=lang; settings.lang=lang;
+  localStorage.setItem('aquaSettings',JSON.stringify(settings));
+  document.querySelectorAll('.lang-btn').forEach(b=>b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  applyLanguage();
+}
+
+function applyLanguage(){
+  const t=translations[currentLang]||translations.en;
+  document.querySelectorAll('[data-i18n]').forEach(el=>{
+    const key=el.getAttribute('data-i18n');
+    if(t[key]) el.textContent=t[key];
+  });
+}
+
+// Feature 12: WhatsApp
+function sendWhatsApp(e){
+  e.preventDefault();
+  const num=document.getElementById('waNumber').value.replace(/\D/g,'');
+  if(!num){ showToast('❗ Please enter your WhatsApp number'); return; }
+  saveSettings();
+  const today=new Date().toLocaleDateString();
+  const drank=logs.filter(l=>l.date===today&&l.type==='drank').length*(perDrinkMl||250);
+  const msg=encodeURIComponent(`💧 *Aqua Daily Report*\n\nHi ${profile?.name||'there'}!\n\nToday's Progress:\n✅ Drank: ${drank}ml\n🎯 Goal: ${totalWaterMl}ml\n📊 Progress: ${Math.round(drank/totalWaterMl*100)}%\n🔥 Streak: ${streak} days\n\nKeep hydrating! 💪`);
+  window.open(`https://wa.me/${num}?text=${msg}`,'_blank');
+}
+
+// Feature 13: Email Report
+function sendEmailReport(e){
+  e.preventDefault();
+  const email=document.getElementById('userEmail').value;
+  if(!email){ showToast('❗ Please enter your email address'); return; }
+  saveSettings();
+  const today=new Date().toLocaleDateString();
+  const drank=logs.filter(l=>l.date===today&&l.type==='drank').length*(perDrinkMl||250);
+  const subject=encodeURIComponent('💧 Aqua Daily Hydration Report');
+  const body=encodeURIComponent(
+    `Hi ${profile?.name||'there'}!\n\nYour Daily Hydration Report for ${today}:\n\n✅ Water Consumed: ${drank}ml\n🎯 Daily Goal: ${totalWaterMl}ml\n📊 Goal Progress: ${Math.round(drank/totalWaterMl*100)}%\n🔥 Current Streak: ${streak} days\n🔔 Reminders Received: ${reminderCount}\n\nKeep up the great work!\n\n— Aqua Smart Water Reminder`
+  );
+  window.location.href=`mailto:${email}?subject=${subject}&body=${body}`;
+}
+
+// ════════════════════════════════════════════════
+//  ADMIN DASHBOARD (Features 16–20)
+// ════════════════════════════════════════════════
+async function loadAdminDashboard(){
+  // Feature 19: Live User Count
+  if(typeof window.listenUserCount==='function'){
+    window.listenUserCount(count=>{
+      document.getElementById('liveCount').textContent=count;
+    });
+  }
+
+  // Feature 18: New User Alert
+  let firstLoad=true;
+  if(typeof window.listenNewUsers==='function'){
+    window.listenNewUsers(userData=>{
+      if(!firstLoad&&userData.name){
+        showToast(`🎉 New user joined: ${userData.name} from ${userData.timezone||'unknown'}!`);
+      }
+    });
+    setTimeout(()=>{ firstLoad=false; },3000);
+  }
+
+  // Load all users
+  if(typeof window.getAllUsersFromFirebase==='function'){
+    const users=await window.getAllUsersFromFirebase();
+    displayAdminUsers(users);
+    buildUserMap(users);
+
+    document.getElementById('aTotal').textContent=users.length;
+    const totalGlasses=users.reduce((a,u)=>a+parseInt(u.glasses_drank||0),0);
+    document.getElementById('aGlasses').textContent=totalGlasses||'0';
+    const today=new Date().toLocaleDateString();
+    const activeToday=users.filter(u=>u.lastSeen&&new Date(u.lastSeen.seconds?u.lastSeen.seconds*1000:u.lastSeen).toLocaleDateString()===today).length;
+    document.getElementById('aActive').textContent=activeToday;
+  }
+}
+
+function displayAdminUsers(users){
+  const list=document.getElementById('userList'); if(!list) return;
+  if(!users.length){ list.innerHTML='<div class="empty-log"><div>📭</div>No users yet</div>'; return; }
+  list.innerHTML='';
+  users.forEach(u=>{
+    const card=document.createElement('div');
+    card.className='user-card';
+    const lastSeen=u.lastSeen?.seconds?new Date(u.lastSeen.seconds*1000).toLocaleString():(u.lastSeen?new Date(u.lastSeen).toLocaleString():'Unknown');
+    card.innerHTML=`
+      <div class="user-card-header">
+        <div class="user-name">👤 ${u.name||'Unknown'}</div>
+        <div class="user-online">Last: ${lastSeen}</div>
+      </div>
+      <div class="user-tags">
+        <span class="user-tag">🎂 ${u.age||'?'} yrs</span>
+        <span class="user-tag">⚖️ ${u.weight||'?'}kg</span>
+        <span class="user-tag">📏 ${u.height||'?'}cm</span>
+        <span class="user-tag">🏃 ${u.activity||'?'}</span>
+        <span class="user-tag">💧 Goal: ${u.dutyMl||'?'}ml</span>
+        <span class="user-tag">🌍 ${u.timezone||'?'}</span>
+        <span class="user-tag">📱 ${(u.screenSize||'?')}</span>
+      </div>
+    `;
+    list.appendChild(card);
+  });
+}
+
+// Feature 20: User Map
+function buildUserMap(users){
+  if(typeof L==='undefined') return;
+  const mapEl=document.getElementById('userMap'); if(!mapEl) return;
+
+  if(mapInstance){ mapInstance.remove(); mapInstance=null; }
+  mapInstance=L.map('userMap').setView([20,0],2);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    attribution:'© OpenStreetMap'
+  }).addTo(mapInstance);
+
+  // Add current user location
+  navigator.geolocation?.getCurrentPosition(pos=>{
+    L.marker([pos.coords.latitude,pos.coords.longitude])
+      .addTo(mapInstance)
+      .bindPopup(`📍 ${profile?.name||'You'}`);
+    mapInstance.setView([pos.coords.latitude,pos.coords.longitude],4);
+  });
+
+  // Add timezone-based approximate locations
+  const tzCoords={
+    'Asia/Kolkata':[20.6,78.9], 'America/New_York':[40.7,-74],
+    'America/Los_Angeles':[34,-118], 'Europe/London':[51.5,-0.1],
+    'Europe/Paris':[48.8,2.3], 'Asia/Tokyo':[35.7,139.7],
+    'Asia/Dubai':[25.2,55.3], 'Australia/Sydney':[-33.9,151.2]
+  };
+  users.forEach(u=>{
+    const coords=tzCoords[u.timezone];
+    if(coords){
+      L.circleMarker(coords,{radius:8,color:getComputedStyle(document.documentElement).getPropertyValue('--primary')||'#0288d1',fillOpacity:0.7})
+        .addTo(mapInstance)
+        .bindPopup(`👤 ${u.name||'User'}<br>💧 Goal: ${u.dutyMl||'?'}ml`);
+    }
+  });
+}
+
+// Feature 17: Export All Users CSV
+async function exportAllUsers(){
+  if(typeof window.getAllUsersFromFirebase==='function'){
+    showToast('📥 Fetching all users...');
+    const users=await window.getAllUsersFromFirebase();
+    if(!users.length){ showToast('No users found!'); return; }
+    const header=['DeviceID','Name','Age','Gender','Height','Weight','Activity','DailyMl','DutyMl','Timezone','Language','Platform','ScreenSize','LastSeen','FirstSeen'];
+    const rows=users.map(u=>[
+      u.deviceId||u.id, u.name||'', u.age||'', u.gender||'',
+      u.height||'', u.weight||'', u.activity||'',
+      u.dailyMl||'', u.dutyMl||'', u.timezone||'',
+      u.language||'', u.platform||'', u.screenSize||'',
+      u.lastSeen?.seconds?new Date(u.lastSeen.seconds*1000).toISOString():(u.lastSeen||''),
+      u.firstSeen||''
+    ]);
+    const csv=[header,...rows].map(r=>r.join(',')).join('\n');
+    const blob=new Blob([csv],{type:'text/csv'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download=`aqua_users_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    showToast(`✅ Exported ${users.length} users!`);
+  }
+}
+
+// Feature 16: Setup live listeners
+function setupLiveListeners(){
+  if(typeof window.listenUserCount==='function'){
+    window.listenUserCount(count=>{
+      document.getElementById('liveCount').textContent=count;
+    });
+  }
+}
+
+// ════════════════════════════════════════════════
+//  PWA (Features 2 & 24)
+// ════════════════════════════════════════════════
+function registerServiceWorker(){
+  if(!('serviceWorker' in navigator)) return;
+  const sw=`
+    const CACHE='aqua-v1';
+    const FILES=['./'];
+    self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES))));
+    self.addEventListener('fetch',e=>e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request))));
+  `;
+  const blob=new Blob([sw],{type:'application/javascript'});
+  const url=URL.createObjectURL(blob);
+  navigator.serviceWorker.register(url).then(()=>console.log('✅ SW registered')).catch(()=>{});
+}
+
+function setupPWAInstall(){
+  window.addEventListener('beforeinstallprompt',e=>{
+    e.preventDefault(); deferredPrompt=e;
+    document.getElementById('installBtn').style.display='block';
+  });
+  window.addEventListener('appinstalled',()=>{
+    document.getElementById('installBtn').style.display='none';
+    showToast('🎉 Aqua installed on your device!');
+  });
+}
+
+function installPWA(){
+  if(!deferredPrompt){ showToast('Open in Chrome/Edge to install!'); return; }
+  deferredPrompt.prompt();
+  deferredPrompt.userChoice.then(c=>{
+    if(c.outcome==='accepted') showToast('🎉 Installing Aqua...');
+    deferredPrompt=null;
+  });
+}
+
+// ════════════════════════════════════════════════
+//  LOG MANAGEMENT
+// ════════════════════════════════════════════════
+function addLog(type,icon,message){
+  const now=new Date();
+  logs.push({ id:logs.length+1, type, icon, message,
+    date:now.toLocaleDateString(),
+    time:now.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'}),
+    ts:now.getTime()
+  });
+  localStorage.setItem('waterLogs',JSON.stringify(logs));
+  renderTable();
+}
+
+function renderTable(){
+  const body=document.getElementById('logBody'); if(!body) return;
+  const search=(document.getElementById('logSearch')||{}).value?.toLowerCase()||'';
+  const emptyMsg=document.getElementById('emptyMsg');
+  let filtered=logs.filter(l=>{
+    const mf=currentFilter==='all'||l.type===currentFilter;
+    const ms=!search||l.message.toLowerCase().includes(search)||l.type.toLowerCase().includes(search);
+    return mf&&ms;
+  }).reverse();
+  body.innerHTML='';
+  if(!filtered.length){
+    emptyMsg.style.display='block';
+    document.getElementById('logTable').style.display='none'; return;
+  }
+  emptyMsg.style.display='none';
+  document.getElementById('logTable').style.display='table';
+  filtered.forEach((l,i)=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td style="color:var(--text-muted)">${filtered.length-i}</td><td>${l.time}</td><td><span class="tag ${l.type}">${l.icon}</span></td><td>${l.message}</td>`;
+    body.appendChild(tr);
+  });
+}
+
+function filterLog(type,btn){ currentFilter=type; document.querySelectorAll('.filter-tab').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); renderTable(); }
+
+function clearLog(){
+  if(!confirm('Clear all logs?')) return;
+  logs=[]; localStorage.removeItem('waterLogs');
+  renderTable(); updateSummary();
+}
+
+function exportCSV(){
+  if(!logs.length){ showToast('No logs to export!'); return; }
+  const header=['#','Date','Time','Type','Event'];
+  const rows=logs.map(l=>[l.id,l.date,l.time,l.type,`"${l.message}"`]);
+  const csv=[header,...rows].map(r=>r.join(',')).join('\n');
+  const blob=new Blob([csv],{type:'text/csv'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download=`aqua_log_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click(); URL.revokeObjectURL(url);
+  addLog('system','⚙️','Log exported as CSV');
+}
+
+// ════════════════════════════════════════════════
+//  SUMMARY & STREAK
+// ════════════════════════════════════════════════
+function updateSummary(){
+  const today=new Date().toLocaleDateString();
+  const td=logs.filter(l=>l.date===today);
+  const drank=td.filter(l=>l.type==='drank').length;
+  document.getElementById('sumGlasses').textContent=drank;
+  document.getElementById('sumReminders').textContent=td.filter(l=>l.type==='reminder').length;
+  document.getElementById('sumMl').textContent=(drank*perDrinkMl)+' ml';
+  document.getElementById('sumStreak').textContent=streak;
+}
+
+function updateStreak(){
+  const lastDate=localStorage.getItem('lastDrankDate');
+  const today=new Date().toLocaleDateString();
+  if(lastDate!==today){
+    const yesterday=new Date(); yesterday.setDate(yesterday.getDate()-1);
+    streak=(lastDate===yesterday.toLocaleDateString())?streak+1:1;
+    localStorage.setItem('waterStreak',streak);
+    localStorage.setItem('lastDrankDate',today);
+  }
+  document.getElementById('sumStreak').textContent=streak;
+  document.getElementById('streakCount').textContent=streak+'🔥';
+}
+
+function syncStats(){
+  const today=new Date().toLocaleDateString();
+  glassCount=logs.filter(l=>l.type==='drank'&&l.date===today).length;
+  reminderCount=logs.filter(l=>l.type==='reminder'&&l.date===today).length;
+  document.getElementById('glassCount').textContent=glassCount;
+  document.getElementById('mlDrank').textContent=(glassCount*perDrinkMl)+'ml';
+  document.getElementById('reminderCount').textContent=reminderCount;
+  document.getElementById('streakCount').textContent=streak+'🔥';
+}
+
+// ════════════════════════════════════════════════
+//  TOAST NOTIFICATION
+// ════════════════════════════════════════════════
+let toastTimer=null;
+function showToast(msg,duration=3500){
+  const t=document.getElementById('toast'); if(!t) return;
+  t.textContent=msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>t.classList.remove('show'),duration);
+}
+
+// ════════════════════════════════════════════════
+//  CLEAR ALL DATA
+// ════════════════════════════════════════════════
+function clearAllData(){
+  if(!confirm('⚠️ This will delete ALL your data including profile, logs, and achievements. Are you sure?')) return;
+  localStorage.clear(); location.reload();
+}
+</script>
+</body>
+</html>
